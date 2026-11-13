@@ -132,8 +132,8 @@ Trois problèmes de fond :
 
 - **B-COH-1** Le package NuGet ne contient **aucun** concept d'affaires : ni déclaration, ni période, ni formulaire, ni énumération du client. `IServiceProcessusAffaires` reste côté client, comme façade d'affaires.
 - **B-COH-2** Sous la façade, le client définit un port neutre unique, avec deux adaptateurs : un vers RHPAM, un vers le nouveau moteur. Les appelants actuels (une cinquantaine de références) ne changent pas.
-- **B-COH-3** Aiguillage au démarrage : une configuration par type de processus décide quel moteur démarre les nouvelles instances. Elle permet de migrer un type à la fois.
-- **B-COH-4** Aiguillage en cours de vie : une instance reste sur le moteur qui l'a démarrée jusqu'à sa fin. Aucune migration d'instance entre moteurs. Il faut donc un registre « clé d'affaires → moteur + identifiant d'instance ».
+- **B-COH-3** Un moteur par type de processus : une configuration associe chaque `TypeProcessus` à son moteur. Elle permet de migrer un type à la fois.
+- **B-COH-4** Une instance reste sur le moteur qui l'a démarrée jusqu'à sa fin. Aucune migration d'instance entre moteurs. L'aiguillage s'appuie sur la table de corrélation (section 9.4).
 - **B-COH-5** Les tâches du bassin portent le moteur d'origine, pour que la complétion d'une tâche soit acheminée au bon moteur.
 - **B-COH-6** Un processus ne peut pas appeler un sous-processus hébergé par l'autre moteur.
 - **B-COH-7** La garantie transactionnelle ne vaut que pour le nouveau moteur. La façade doit le documenter : un appel acheminé vers RHPAM reste hors transaction.
@@ -142,14 +142,40 @@ Trois problèmes de fond :
 
 Ces besoins découlent directement des méthodes existantes ; sans eux, l'adaptateur ne peut pas être écrit.
 
-- **B-COH-8** Clé d'affaires obligatoire sur l'instance (clé de définition + identifiant), et recherche d'une instance active par cette clé. Remplace la proposition B-ET-2 par un besoin ferme.
-- **B-COH-9** Signal adressé par clé d'affaires, pas seulement par identifiant d'instance.
+- **B-COH-8** *(couvert par la table de corrélation si elle est retenue telle que décrite en 9.4)* Clé d'affaires obligatoire sur l'instance (clé de définition + identifiant), et recherche d'une instance active par cette clé. Remplace la proposition B-ET-2 par un besoin ferme.
+- **B-COH-9** *(idem)* Signal adressé par clé d'affaires, pas seulement par identifiant d'instance.
 - **B-COH-10** Signal conditionnel : si l'instance n'attend pas ce signal, l'appel ne lève pas d'erreur et retourne un résultat qui l'indique (équivalent de `TerminerTacheSiEnAttenteAsync`).
 - **B-COH-11** Un nœud d'attente peut accepter plusieurs signaux, chacun menant à sa propre transition. L'appelant n'a plus à essayer une liste de noms.
 - **B-COH-12** Les signaux et les complétions de tâche transportent un contenu (le `T contenu` actuel), versé dans les données de l'instance.
 - **B-COH-13** L'acteur (le `logon` actuel) est transmis au moteur à chaque appel et rendu disponible aux handlers.
 - **B-COH-14** Les identifiants d'instance et de tâche sont compatibles avec les `long` de l'interface actuelle (ou le registre de B-COH-4 fait la traduction).
 - **B-COH-15** Une seule opération de démarrage, transactionnelle. Le démarrage différé (« éventuellement ») devient une responsabilité du client, par exemple avec une boîte d'envoi.
+
+### 9.4 Table de corrélation (côté client)
+
+Décision : une table dédiée conserve les clés de corrélation et le type de processus. On ne cherche plus une instance en interrogeant les variables de processus qui contiennent les identifiants d'affaires. Cette table sert aussi à aiguiller vers le bon moteur.
+
+- **B-COR-1** La table appartient au client, pas au package NuGet. Elle est commune aux deux moteurs.
+- **B-COR-2** Contenu minimal d'une ligne :
+
+| Colonne | Rôle |
+|---|---|
+| Type de processus | `TypeProcessus` ; détermine le moteur |
+| Nature de la clé | Ex. déclaration, période de déclaration, identification système |
+| Valeur de la clé | L'identifiant d'affaires (`long`) |
+| Identifiant d'instance | Celui attribué par le moteur |
+| Statut | En cours, terminée, annulée |
+| Dates | Démarrage, fin |
+
+- **B-COR-3** Une instance peut avoir plusieurs clés (par exemple un numéro de déclaration et un numéro de période) : une ligne par clé, ou une table enfant.
+- **B-COR-4** La façade répond à `EstProcessusEnCoursAsync` et `EstProcessusDeclarationEnCoursAsync` directement depuis la table, sans appeler le moteur.
+- **B-COR-5** Signaux et recherches : la façade résout d'abord la clé d'affaires en (moteur, identifiant d'instance) dans la table, puis appelle le moteur avec l'identifiant d'instance.
+- **B-COR-6** Nouveau moteur : la ligne est écrite à l'intérieur de la même `IDbTransaction` que le démarrage, et le statut est mis à jour par le signalement de fin de processus (B-ABS-2), dans la transaction qui termine l'instance.
+- **B-COR-7** **[Proposition]** Conserver aussi le moteur sur chaque ligne, même s'il se déduit du type. Le jour où un type bascule de RHPAM au nouveau moteur, les instances déjà en cours doivent encore être acheminées vers RHPAM ; la configuration seule ne le permet pas.
+- **B-COR-8** **[Proposition]** Unicité d'une instance en cours par (type de processus, nature de clé, valeur), garantie par un index unique filtré, si la règle d'affaires le veut. Elle protège contre les doubles démarrages.
+- **B-COR-9** **[Proposition]** RHPAM : l'appel distant et l'écriture dans la table ne sont pas atomiques. Prévoir l'ordre des opérations et une réconciliation (ligne sans instance, instance sans ligne).
+
+Conséquence pour le package : la recherche et le signal par clé d'affaires (B-COH-8, B-COH-9) peuvent rester hors du moteur. Il lui suffit alors d'exposer des opérations par identifiant d'instance, ce qui le garde plus léger.
 
 ## 10. Hors périmètre (proposé)
 
@@ -174,3 +200,6 @@ Ces besoins découlent directement des méthodes existantes ; sans eux, l'adapta
 10. **Sens exact des trois démarrages.** Que distinguent `DemarrerProcessusAsync`, `…SynchroneAsync` et `…EventuellementAsync` aujourd'hui ? La réponse confirme ou invalide B-COH-15.
 11. **Rôle de `TypeSousProcessus` et de `TypeFormulaire`.** Servent-ils à cibler un sous-processus en attente et à choisir une variante de définition, ou sont-ils de simples données d'instance ?
 12. **Fin de vie de RHPAM.** Cohabitation permanente, ou retrait une fois les instances en cours terminées ? Cela détermine l'effort à mettre dans le registre et l'aiguillage.
+13. **Fin d'une instance RHPAM.** Comment la table apprend-elle qu'une instance RHPAM est terminée (rappel de RHPAM, tâche finale du modèle, interrogation périodique) ? Sans cela, `EstProcessusEnCoursAsync` ne peut pas se fier à la table pour ces instances.
+14. **Reprise de l'existant.** Les instances RHPAM déjà en cours doivent-elles être chargées dans la table à la mise en service, ou garde-t-on la recherche par variables pour elles jusqu'à leur fin ?
+15. **Sous-processus.** Une ligne par sous-processus (avec `TypeSousProcessus`), ou seulement pour l'instance racine ?
