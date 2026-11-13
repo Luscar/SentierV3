@@ -119,13 +119,13 @@ Contexte : l'application utilise déjà RHPAM à travers `IServiceProcessusAffai
 | `EstProcessusDeclarationEnCoursAsync` | Même question, pour une déclaration | Cas particulier de la précédente |
 | `TerminerTacheAsync<T>` | Compléter une tâche interactive avec un contenu | Rien : déjà générique |
 | `TerminerTacheEnAttenteAsync` | Envoyer un signal à l'instance d'une période de déclaration | La clé est un concept d'affaires |
-| `TerminerTacheSiEnAttenteAsync<T>` | Envoyer un signal seulement si l'instance l'attend ; essaie plusieurs noms de signaux | L'appelant doit connaître les noms de signaux du modèle ; `TypeSousProcessus` |
+| `TerminerTacheSiEnAttenteAsync<T>` | Envoyer un signal seulement si l'instance l'attend ; essaie plusieurs noms de signaux | L'appelant doit connaître les noms de signaux du modèle ; `TypeSousProcessus` (sera retiré, voir B-COH-16) |
 | `AvancerATacheSuivanteAsync<T>` | Signaler, puis diriger vers une tâche précise | L'appelant dicte le prochain nœud (`codeProchaineTache`) : le flux fuit hors de la définition |
 
 Trois problèmes de fond :
 
 - **Une même notion sous quatre noms** : `identifiant`, `numeroIdentificationSysteme`, `numeroDeclaration`, `numeroPeriodeDeclaration` sont tous des clés d'affaires servant à retrouver une instance.
-- **Le modèle de processus fuit chez l'appelant** : noms de signaux, type de sous-processus, code de la prochaine tâche.
+- **Le modèle de processus fuit chez l'appelant** : noms de signaux, code de la prochaine tâche.
 - **Aucune transaction** : normal pour RHPAM (appel distant), mais c'est justement ce que le nouveau moteur doit corriger.
 
 ### 9.2 Principe retenu
@@ -135,7 +135,7 @@ Trois problèmes de fond :
 - **B-COH-3** Un moteur par type de processus : une configuration associe chaque `TypeProcessus` à son moteur. Elle permet de migrer un type à la fois.
 - **B-COH-4** Une instance reste sur le moteur qui l'a démarrée jusqu'à sa fin. Aucune migration d'instance entre moteurs. L'aiguillage s'appuie sur la table de corrélation (section 9.4).
 - **B-COH-5** Les tâches du bassin portent le moteur d'origine, pour que la complétion d'une tâche soit acheminée au bon moteur.
-- **B-COH-6** Un processus ne peut pas appeler un sous-processus hébergé par l'autre moteur.
+- **B-COH-6** Un processus ne peut pas appeler un sous-processus hébergé par l'autre moteur. Comme chaque sous-processus a son propre `TypeProcessus` (B-COH-16) et qu'il y a un moteur par type, la configuration doit placer un parent et ses sous-processus sur le même moteur ; les types liés basculent donc ensemble.
 - **B-COH-7** La garantie transactionnelle ne vaut que pour le nouveau moteur. La façade doit le documenter : un appel acheminé vers RHPAM reste hors transaction.
 
 ### 9.3 Ce que l'interface actuelle impose au nouveau moteur
@@ -150,6 +150,8 @@ Ces besoins découlent directement des méthodes existantes ; sans eux, l'adapta
 - **B-COH-13** L'acteur (le `logon` actuel) est transmis au moteur à chaque appel et rendu disponible aux handlers.
 - **B-COH-14** Les identifiants d'instance et de tâche sont compatibles avec les `long` de l'interface actuelle (ou le registre de B-COH-4 fait la traduction).
 - **B-COH-15** Une seule opération de démarrage, transactionnelle. Le démarrage différé (« éventuellement ») devient une responsabilité du client, par exemple avec une boîte d'envoi.
+
+- **B-COH-16** Décision : `TypeSousProcessus` est retiré et remplacé par `TypeProcessus`. Un sous-processus est une définition de processus comme une autre, identifiée par son propre `TypeProcessus` ; il n'existe qu'un seul catalogue de définitions. `TerminerTacheSiEnAttenteAsync` cible donc le sous-processus par son `TypeProcessus`.
 
 ### 9.4 Table de corrélation (côté client)
 
@@ -167,6 +169,7 @@ Décision : une table dédiée conserve les clés de corrélation et le type de 
 | Statut | En cours, terminée, annulée |
 | Dates | Démarrage, fin |
 
+- **B-COR-3a** Une instance de sous-processus a sa propre ligne, sous son propre `TypeProcessus`, avec la même clé d'affaires que son parent. Un signal destiné à un sous-processus se résout ainsi comme n'importe quel autre : (type de processus, clé) → instance.
 - **B-COR-3** Une instance peut avoir plusieurs clés (par exemple un numéro de déclaration et un numéro de période) : une ligne par clé, ou une table enfant.
 - **B-COR-4** La façade répond à `EstProcessusEnCoursAsync` et `EstProcessusDeclarationEnCoursAsync` directement depuis la table, sans appeler le moteur.
 - **B-COR-5** Signaux et recherches : la façade résout d'abord la clé d'affaires en (moteur, identifiant d'instance) dans la table, puis appelle le moteur avec l'identifiant d'instance.
@@ -198,8 +201,9 @@ Conséquence pour le package : la recherche et le signal par clé d'affaires (B-
 8. **Multi-locataire.** Besoin d'un identifiant de locataire sur les instances ?
 9. **Saut vers une tâche (`AvancerATacheSuivanteAsync`).** Le nouveau moteur doit-il permettre à l'appelant d'imposer le prochain nœud, ou ce cas se modélise-t-il par des transitions nommées dans la définition ? La deuxième option garde le flux dans la définition, mais demande de revoir les appelants concernés.
 10. **Sens exact des trois démarrages.** Que distinguent `DemarrerProcessusAsync`, `…SynchroneAsync` et `…EventuellementAsync` aujourd'hui ? La réponse confirme ou invalide B-COH-15.
-11. **Rôle de `TypeSousProcessus` et de `TypeFormulaire`.** Servent-ils à cibler un sous-processus en attente et à choisir une variante de définition, ou sont-ils de simples données d'instance ?
+11. **Rôle de `TypeFormulaire`.** Sert-il à choisir une variante de définition, ou est-ce une simple donnée d'instance ? (`TypeSousProcessus` : réglé, voir B-COH-16.)
 12. **Fin de vie de RHPAM.** Cohabitation permanente, ou retrait une fois les instances en cours terminées ? Cela détermine l'effort à mettre dans le registre et l'aiguillage.
 13. **Fin d'une instance RHPAM.** Comment la table apprend-elle qu'une instance RHPAM est terminée (rappel de RHPAM, tâche finale du modèle, interrogation périodique) ? Sans cela, `EstProcessusEnCoursAsync` ne peut pas se fier à la table pour ces instances.
 14. **Reprise de l'existant.** Les instances RHPAM déjà en cours doivent-elles être chargées dans la table à la mise en service, ou garde-t-on la recherche par variables pour elles jusqu'à leur fin ?
-15. **Sous-processus.** Une ligne par sous-processus (avec `TypeSousProcessus`), ou seulement pour l'instance racine ?
+15. **Lien parent-enfant dans la table.** Faut-il une colonne « instance parente » sur la ligne d'un sous-processus, pour annuler ou retrouver les enfants d'un processus ?
+16. **Sous-processus répété.** Un même sous-processus peut-il tourner plusieurs fois en même temps pour une même clé d'affaires ? Si oui, l'unicité proposée en B-COR-8 ne tient pas pour ces types.
