@@ -104,15 +104,63 @@ Chaque appel reçoit la `IDbTransaction` du client.
 - **B-NF-4** **[Proposition]** Observabilité : `ILogger` et `ActivitySource` facultatifs.
 - **B-NF-5** **[Proposition]** Export d'une définition en diagramme Mermaid pour la documentation.
 
-## 9. Hors périmètre (proposé)
+## 9. Cohabitation avec RHPAM
+
+Contexte : l'application utilise déjà RHPAM à travers `IServiceProcessusAffaires` (implémentations RHPAM, bouchon et service courant). Les deux moteurs devront vivre côte à côte pendant une période indéterminée.
+
+> Cette section est basée sur la seule signature de l'interface. Les lectures marquées « à confirmer » sont des déductions à partir des noms.
+
+### 9.1 Constat sur l'interface actuelle
+
+| Méthode actuelle | Ce qu'elle exprime | Ce qui est lié à l'affaire ou à RHPAM |
+|---|---|---|
+| `DemarrerProcessusAsync`, `DemarrerProcessusSynchroneAsync`, `DemarrerProcessusEventuellementAsync` | Démarrer une instance | Trois variantes qui exposent le mode d'appel de RHPAM (distant, différé — à confirmer) ; `TypeFormulaire` ; `logon` |
+| `EstProcessusEnCoursAsync` | Existe-t-il une instance active pour cette clé ? | Rien, sauf l'énumération `TypeProcessus` |
+| `EstProcessusDeclarationEnCoursAsync` | Même question, pour une déclaration | Cas particulier de la précédente |
+| `TerminerTacheAsync<T>` | Compléter une tâche interactive avec un contenu | Rien : déjà générique |
+| `TerminerTacheEnAttenteAsync` | Envoyer un signal à l'instance d'une période de déclaration | La clé est un concept d'affaires |
+| `TerminerTacheSiEnAttenteAsync<T>` | Envoyer un signal seulement si l'instance l'attend ; essaie plusieurs noms de signaux | L'appelant doit connaître les noms de signaux du modèle ; `TypeSousProcessus` |
+| `AvancerATacheSuivanteAsync<T>` | Signaler, puis diriger vers une tâche précise | L'appelant dicte le prochain nœud (`codeProchaineTache`) : le flux fuit hors de la définition |
+
+Trois problèmes de fond :
+
+- **Une même notion sous quatre noms** : `identifiant`, `numeroIdentificationSysteme`, `numeroDeclaration`, `numeroPeriodeDeclaration` sont tous des clés d'affaires servant à retrouver une instance.
+- **Le modèle de processus fuit chez l'appelant** : noms de signaux, type de sous-processus, code de la prochaine tâche.
+- **Aucune transaction** : normal pour RHPAM (appel distant), mais c'est justement ce que le nouveau moteur doit corriger.
+
+### 9.2 Principe retenu
+
+- **B-COH-1** Le package NuGet ne contient **aucun** concept d'affaires : ni déclaration, ni période, ni formulaire, ni énumération du client. `IServiceProcessusAffaires` reste côté client, comme façade d'affaires.
+- **B-COH-2** Sous la façade, le client définit un port neutre unique, avec deux adaptateurs : un vers RHPAM, un vers le nouveau moteur. Les appelants actuels (une cinquantaine de références) ne changent pas.
+- **B-COH-3** Aiguillage au démarrage : une configuration par type de processus décide quel moteur démarre les nouvelles instances. Elle permet de migrer un type à la fois.
+- **B-COH-4** Aiguillage en cours de vie : une instance reste sur le moteur qui l'a démarrée jusqu'à sa fin. Aucune migration d'instance entre moteurs. Il faut donc un registre « clé d'affaires → moteur + identifiant d'instance ».
+- **B-COH-5** Les tâches du bassin portent le moteur d'origine, pour que la complétion d'une tâche soit acheminée au bon moteur.
+- **B-COH-6** Un processus ne peut pas appeler un sous-processus hébergé par l'autre moteur.
+- **B-COH-7** La garantie transactionnelle ne vaut que pour le nouveau moteur. La façade doit le documenter : un appel acheminé vers RHPAM reste hors transaction.
+
+### 9.3 Ce que l'interface actuelle impose au nouveau moteur
+
+Ces besoins découlent directement des méthodes existantes ; sans eux, l'adaptateur ne peut pas être écrit.
+
+- **B-COH-8** Clé d'affaires obligatoire sur l'instance (clé de définition + identifiant), et recherche d'une instance active par cette clé. Remplace la proposition B-ET-2 par un besoin ferme.
+- **B-COH-9** Signal adressé par clé d'affaires, pas seulement par identifiant d'instance.
+- **B-COH-10** Signal conditionnel : si l'instance n'attend pas ce signal, l'appel ne lève pas d'erreur et retourne un résultat qui l'indique (équivalent de `TerminerTacheSiEnAttenteAsync`).
+- **B-COH-11** Un nœud d'attente peut accepter plusieurs signaux, chacun menant à sa propre transition. L'appelant n'a plus à essayer une liste de noms.
+- **B-COH-12** Les signaux et les complétions de tâche transportent un contenu (le `T contenu` actuel), versé dans les données de l'instance.
+- **B-COH-13** L'acteur (le `logon` actuel) est transmis au moteur à chaque appel et rendu disponible aux handlers.
+- **B-COH-14** Les identifiants d'instance et de tâche sont compatibles avec les `long` de l'interface actuelle (ou le registre de B-COH-4 fait la traduction).
+- **B-COH-15** Une seule opération de démarrage, transactionnelle. Le démarrage différé (« éventuellement ») devient une responsabilité du client, par exemple avec une boîte d'envoi.
+
+## 10. Hors périmètre (proposé)
 
 - Concepteur graphique, import/export BPMN.
 - Passerelles parallèles (fork/join) — à confirmer, voir question 3.
 - Gestion des utilisateurs, rôles et assignations (responsabilité du bassin de tâches).
 - Reprises automatiques, compensation, sagas distribuées.
 - Migration d'instances en cours vers une nouvelle version de définition.
+- Migration d'instances de RHPAM vers le nouveau moteur.
 
-## 10. Questions ouvertes
+## 11. Questions ouvertes
 
 1. **Persistance de l'état du moteur.** Avec seulement une `IDbTransaction`, où vit l'état des instances ? Soit le moteur écrit lui-même ses tables via `transaction.Connection` (il faut alors gérer les dialectes SQL et le schéma), soit le client implémente une interface de stockage (plus léger pour le package, plus de travail pour le client).
 2. **Synchrone ou asynchrone.** `IDbTransaction` est une interface synchrone ; les handlers côté client seront-ils `async` ? Si oui, viser plutôt `DbTransaction`.
@@ -122,3 +170,7 @@ Chaque appel reçoit la `IDbTransaction` du client.
 6. **Signaux.** Adressés à une instance précise, ou diffusés à toutes les instances en attente de ce signal ?
 7. **Cibles .NET.** `netstandard2.0`, ou .NET 8+ seulement ?
 8. **Multi-locataire.** Besoin d'un identifiant de locataire sur les instances ?
+9. **Saut vers une tâche (`AvancerATacheSuivanteAsync`).** Le nouveau moteur doit-il permettre à l'appelant d'imposer le prochain nœud, ou ce cas se modélise-t-il par des transitions nommées dans la définition ? La deuxième option garde le flux dans la définition, mais demande de revoir les appelants concernés.
+10. **Sens exact des trois démarrages.** Que distinguent `DemarrerProcessusAsync`, `…SynchroneAsync` et `…EventuellementAsync` aujourd'hui ? La réponse confirme ou invalide B-COH-15.
+11. **Rôle de `TypeSousProcessus` et de `TypeFormulaire`.** Servent-ils à cibler un sous-processus en attente et à choisir une variante de définition, ou sont-ils de simples données d'instance ?
+12. **Fin de vie de RHPAM.** Cohabitation permanente, ou retrait une fois les instances en cours terminées ? Cela détermine l'effort à mettre dans le registre et l'aiguillage.
