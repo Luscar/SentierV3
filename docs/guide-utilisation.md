@@ -12,8 +12,9 @@ L'exemple suivi tout au long du guide est une demande de remboursement. Un exemp
 - [6. Piloter les instances](#6-piloter-les-instances)
 - [7. Réagir à la fin d'un processus](#7-réagir-à-la-fin-dun-processus)
 - [8. Faire évoluer une définition](#8-faire-évoluer-une-définition)
-- [9. Tester](#9-tester)
-- [10. Exceptions](#10-exceptions)
+- [9. Suivre et exploiter](#9-suivre-et-exploiter)
+- [10. Tester](#10-tester)
+- [11. Exceptions](#11-exceptions)
 
 ## 1. Les notions
 
@@ -166,15 +167,15 @@ Tout ce que font le moteur, les commandes, le bassin et les écouteurs pendant l
 
 ### 2.7 Vérifier les instances au démarrage
 
-Au démarrage de l'application, `VerifierInstancesAsync` liste les instances en cours arrêtées sur un nœud qui n'existe plus dans le code livré (voir la section 8) :
+Le moteur ne vérifie rien seul. Quand une définition change, c'est à l'application d'appeler `ISuiviSentier.VerifierInstancesAsync`, qui liste les instances en cours que le code livré ne sait plus faire avancer (section 9). L'appeler au démarrage de l'application est le plus simple :
 
 ```csharp
-var orphelines = await moteur.VerifierInstancesAsync(ct);
+var orphelines = await suivi.VerifierInstancesAsync(ct);
 foreach (var o in orphelines)
-    journal.LogError("Instance {Id} ({Definition}) arrêtée sur le nœud inconnu {Noeud}", o.IdInstance, o.CleDefinition, o.Noeud);
+    journal.LogError("Instance {Id} ({Definition}) orpheline sur {Noeud} : {Raison}", o.IdInstance, o.CleDefinition, o.Noeud, o.Raison);
 ```
 
-Ce premier appel construit aussi le registre, donc une définition invalide est signalée dès le démarrage plutôt qu'au premier usage.
+La résolution du suivi construit aussi le registre, donc une définition invalide est signalée dès le démarrage plutôt qu'au premier usage.
 
 ## 3. Définir un processus
 
@@ -606,11 +607,73 @@ public void Definir(IProcessusBuilder p) => p
 - Le nouveau nœud doit être un point d'attente de même nature que l'ancien (une tâche pour une tâche, un signal pour un signal).
 - L'ancien identifiant ne doit plus être un nœud de la définition.
 - Les correspondances s'enchaînent : `a` vers `b`, puis `b` vers `c`.
-- Sans correspondance, l'instance lève `NoeudInconnuException` au prochain appel, et `VerifierInstancesAsync` la signale au démarrage (section 2.7).
+- Sans correspondance, l'instance lève `NoeudInconnuException` au prochain appel. `ISuiviSentier.VerifierInstancesAsync` la signale avant, et `MigrerInstancesAsync` applique les correspondances en base (section 9).
 
 Ne changez ni la clé d'une définition ni le nom d'une variable tant que des instances en cours les portent.
 
-## 9. Tester
+## 9. Suivre et exploiter
+
+`ISuiviSentier` regroupe ce qui ne fait avancer aucune instance : vérification, migration et diagrammes. Elle est séparée de `IMoteurSentier` et enregistrée par scope comme lui. Le moteur n'appelle jamais ces opérations : l'application les exécute quand elle le décide.
+
+### 9.1 Vérifier les instances
+
+```csharp
+var orphelines = await suivi.VerifierInstancesAsync(ct);
+```
+
+Une instance en cours est orpheline, avec la raison dans `Raison`, si :
+
+- sa définition n'existe plus ;
+- son nœud courant n'existe plus et n'a pas de correspondance ;
+- le nœud où elle se résout n'est pas de la même nature d'attente (elle attend une tâche, le nœud attend un signal).
+
+L'appel ne modifie rien et ne lit pas les variables des instances saines : il regarde les points d'arrêt distincts, puis ne charge que les orphelines.
+
+### 9.2 Migrer les instances
+
+Une correspondance (section 8) replace une instance à sa prochaine sollicitation, et doit donc rester dans le code tant qu'une instance est arrêtée sur l'ancien nœud. `MigrerInstancesAsync` applique les correspondances en base tout de suite :
+
+```csharp
+using var portee = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled);
+var resultat = await suivi.MigrerInstancesAsync(ct);
+portee.Complete();
+
+foreach (var m in resultat.Migrations)
+    journal.LogInformation("{Definition} : {Nombre} instance(s) de {Ancien} vers {Nouveau}", m.CleDefinition, m.NombreInstances, m.AncienNoeud, m.NouveauNoeud);
+```
+
+- Seul le nœud courant change ; la tâche, l'échéance, le groupe et les variables restent tels quels.
+- Les orphelines ne sont pas touchées ; elles sont retournées dans `Orphelines`.
+- Relancer la migration ne fait rien de plus.
+- Quand `Orphelines` est vide après la migration, les correspondances peuvent être retirées du code à la livraison suivante.
+- La migration n'écrit rien dans l'historique.
+
+### 9.3 Diagrammes Mermaid
+
+```csharp
+foreach (var cle in suivi.ClesDefinitions)
+    File.WriteAllText($"{cle}.mmd", suivi.DiagrammeDefinition(cle));
+
+string? diagramme = await suivi.DiagrammeInstanceAsync("REMB-42", ct);   // null si la clé est inconnue
+```
+
+`DiagrammeDefinition` retourne un `flowchart` Mermaid de la définition :
+
+| Nœud | Forme | Détail affiché |
+|---|---|---|
+| Systémique | Rectangle | La commande |
+| Décision | Losange | La requête |
+| Interactif | Parallélogramme | Le code de tâche |
+| Attente de signal | Stade | « signal » ou « signal de groupe » |
+| Attente de temps | Hexagone | La durée ou la variable de date |
+| Sous-processus | Rectangle à doubles bords | La définition appelée |
+| Fin | Double cercle | Le nom de la fin, s'il diffère de l'identifiant |
+
+Les flèches portent la valeur d'une branche, le signal ou la transition ; une escalade est en pointillé.
+
+`DiagrammeInstanceAsync` dessine l'arbre d'une clé de corrélation : un bloc pour l'instance de tête, puis un par sous-processus en cours. Le nœud courant de chaque instance est en évidence. Si l'historique est actif, les nœuds déjà traversés sont colorés ; sinon seul le nœud courant l'est. Pour une instance terminée ou annulée, seule la tête est dessinée.
+
+## 10. Tester
 
 ### Une commande ou une requête seule
 
@@ -655,7 +718,7 @@ Assert.Equal("approbation", etat.NoeudCourant);
 
 `tests/Sentier.Tests/Banc.cs` et `tests/Sentier.Tests/Doublures/` montrent un banc complet : bassin en mémoire, écouteur, résolveur et horloge réglable (un `TimeProvider`) pour faire passer les échéances.
 
-## 10. Exceptions
+## 11. Exceptions
 
 Toutes dérivent de `SentierException`.
 

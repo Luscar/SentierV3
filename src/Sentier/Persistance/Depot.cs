@@ -120,8 +120,35 @@ internal sealed class Depot(IAccesBDSentier bd, NomsSentier noms, TimeProvider h
             $"{Selection} WHERE STATUT = 'EN_COURS' AND TYPE_ATTENTE IN ('TEMPS', 'TACHE', 'SIGNAL') AND DATE_ECHEANCE <= :Instant ORDER BY DATE_ECHEANCE",
             new { Instant = instant }, ct));
 
-    public async Task<List<Instance>> EnCoursAsync(CancellationToken ct)
-        => Vers(await bd.QueryAsync<LigneInstance>($"{Selection} WHERE STATUT = 'EN_COURS' ORDER BY ID_INSTANCE", null, ct));
+    /// <summary>Points d'arrêt distincts des instances en cours : quelques lignes, sans les variables.</summary>
+    public async Task<List<LigneArret>> ArretsAsync(CancellationToken ct)
+        => (await bd.QueryAsync<LigneArret>($"""
+            SELECT DISTINCT CLE_DEFINITION AS CleDefinition, NOEUD_COURANT AS NoeudCourant, TYPE_ATTENTE AS TypeAttente
+              FROM {noms.TableInstance}
+             WHERE STATUT = 'EN_COURS'
+             ORDER BY CLE_DEFINITION, NOEUD_COURANT, TYPE_ATTENTE
+            """, null, ct)).ToList();
+
+    public async Task<List<Instance>> ArretesSurAsync(LigneArret arret, CancellationToken ct)
+        => Vers(await bd.QueryAsync<LigneInstance>(
+            $"{Selection} WHERE STATUT = 'EN_COURS' AND CLE_DEFINITION = :CleDefinition AND NOEUD_COURANT = :NoeudCourant AND {FiltreAttente(arret)} ORDER BY ID_INSTANCE",
+            new { arret.CleDefinition, arret.NoeudCourant, arret.TypeAttente }, ct));
+
+    /// <summary>Replace sur un nouveau nœud toutes les instances en cours d'un point d'arrêt ; retourne leur nombre.</summary>
+    public Task<int> DeplacerAsync(LigneArret arret, string nouveauNoeud, CancellationToken ct)
+        => bd.ExecuteNonQueryAsync($"""
+            UPDATE {noms.TableInstance}
+               SET NOEUD_COURANT = :NouveauNoeud, NO_VERSION = NO_VERSION + 1, DATE_MODIFICATION = :DateModification
+             WHERE STATUT = 'EN_COURS' AND CLE_DEFINITION = :CleDefinition AND NOEUD_COURANT = :NoeudCourant AND {FiltreAttente(arret)}
+            """,
+            new { NouveauNoeud = nouveauNoeud, DateModification = Maintenant, arret.CleDefinition, arret.NoeudCourant, arret.TypeAttente }, ct);
+
+    private static string FiltreAttente(LigneArret arret) => arret.TypeAttente is null ? "TYPE_ATTENTE IS NULL AND :TypeAttente IS NULL" : "TYPE_ATTENTE = :TypeAttente";
+
+    public async Task<IReadOnlySet<string>> NoeudsVisitesAsync(long idInstance, CancellationToken ct)
+        => (await bd.QueryAsync<string>(
+            $"SELECT DISTINCT NOEUD FROM {noms.TableHistorique} WHERE ID_INSTANCE = :IdInstance", new { IdInstance = idInstance }, ct))
+            .ToHashSet(StringComparer.Ordinal);
 
     public async Task HistoriserAsync(Instance instance, string noeud, string evenement, string? transition, string acteur, CancellationToken ct)
     {

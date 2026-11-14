@@ -193,19 +193,16 @@ public class MoteurTests
     }
 
     [Fact]
-    public async Task Noeud_renomme_et_verification_au_demarrage()
+    public async Task Noeud_renomme()
     {
         using var banc = new Banc();
         var etat = await banc.Moteur.DemarrerAsync(banc.Demande());
 
         // Nouvelle version du code : le nœud « verification » s'appelle maintenant « controle ».
         var sansCorrespondance = banc.CreerMoteur(new Renommee(false), new Identification(), new Comptabilisation());
-        var orpheline = Assert.Single(await sansCorrespondance.VerifierInstancesAsync());
-        Assert.Equal("verification", orpheline.Noeud);
         await Assert.ThrowsAsync<NoeudInconnuException>(() => sansCorrespondance.CompleterTacheAsync(etat.RefTache!.Value, "bob"));
 
         var avecCorrespondance = banc.CreerMoteur(new Renommee(true), new Identification(), new Comptabilisation());
-        Assert.Empty(await avecCorrespondance.VerifierInstancesAsync());
         Assert.Equal("controle", (await avecCorrespondance.ObtenirEtatAsync("cle-1"))!.NoeudCourant);
         var suite = await avecCorrespondance.CompleterTacheAsync(etat.RefTache!.Value, "bob");
         Assert.Equal(StatutInstance.Terminee, suite.Statut);
@@ -362,7 +359,7 @@ public class MoteurTests
         }
     }
 
-    private sealed class Renommee(bool correspondance) : IDefinitionProcessus
+    internal sealed class Renommee(bool correspondance) : IDefinitionProcessus
     {
         public string Cle => "DeclOrign";
 

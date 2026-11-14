@@ -44,7 +44,4 @@ public interface IMoteurSentier
     Task<EtatInstance?> AnnulerAsync(string cleCorrelation, string acteur, CancellationToken cancellationToken = default);
 
     Task<EtatInstance?> ObtenirEtatAsync(string cleCorrelation, CancellationToken cancellationToken = default);
-
-    /// <summary>À lancer au démarrage de l'application : instances arrêtées sur un nœud inconnu et sans correspondance.</summary>
-    Task<IReadOnlyList<InstanceOrpheline>> VerifierInstancesAsync(CancellationToken cancellationToken = default);
 }

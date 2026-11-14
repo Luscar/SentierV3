@@ -51,6 +51,15 @@ public sealed class ModuleSentier(Action<OptionsSentier> configurer, params Asse
                 c.ResolveOptional<TimeProvider>()))
             .As<IMoteurSentier>()
             .InstancePerLifetimeScope();
+
+        // Suivi et exploitation, à part du pilotage.
+        builder.Register(c => new SuiviSentier(
+                c.Resolve<RegistreDefinitions>(),
+                c.Resolve<IAccesBDSentier>(),
+                c.Resolve<OptionsSentier>(),
+                c.ResolveOptional<TimeProvider>()))
+            .As<ISuiviSentier>()
+            .InstancePerLifetimeScope();
     }
 
     private sealed class ResolveurAutofac(ILifetimeScope scope) : IResolveurSentier

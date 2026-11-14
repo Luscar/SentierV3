@@ -167,6 +167,7 @@ L'ordre des enregistrements n'a pas d'importance. Si les services de l'applicati
 | `IEcouteurFinProcessus` | Balayage | `As<IEcouteurFinProcessus>()`, par scope |
 | `IResolveurSentier` | — | Par scope ; résout les handlers dans le scope courant |
 | `IMoteurSentier` | — | Par scope |
+| `ISuiviSentier` | — | Par scope |
 
 ### Le balayage
 
@@ -223,6 +224,11 @@ services.AddScoped<IMoteurSentier>(sp => new MoteurSentier(
     sp.GetRequiredService<IResolveurSentier>(),
     sp.GetRequiredService<IBassinTaches>(),
     sp.GetServices<IEcouteurFinProcessus>(),
+    sp.GetRequiredService<OptionsSentier>(),
+    sp.GetService<TimeProvider>()));
+services.AddScoped<ISuiviSentier>(sp => new SuiviSentier(
+    sp.GetRequiredService<RegistreDefinitions>(),
+    sp.GetRequiredService<IAccesBDSentier>(),
     sp.GetRequiredService<OptionsSentier>(),
     sp.GetService<TimeProvider>()));
 ```
@@ -295,15 +301,17 @@ Le moteur, les handlers, le bassin et les écouteurs travaillent dans cette tran
 Au démarrage de l'application, dans un scope :
 
 ```csharp
-var orphelines = await moteur.VerifierInstancesAsync(ct);
+var orphelines = await suivi.VerifierInstancesAsync(ct);   // ISuiviSentier
 foreach (var o in orphelines)
-    journal.LogError("Instance {Id} ({Definition}) arrêtée sur le nœud inconnu {Noeud}", o.IdInstance, o.CleDefinition, o.Noeud);
+    journal.LogError("Instance {Id} ({Definition}) orpheline sur {Noeud} : {Raison}", o.IdInstance, o.CleDefinition, o.Noeud, o.Raison);
 ```
 
 Cet appel fait deux choses :
 
-- il résout le moteur, donc construit le registre : une définition invalide lève `DefinitionInvalideException` au démarrage plutôt qu'au premier usage ;
-- il liste les instances en cours arrêtées sur un nœud qui n'existe plus dans le code livré.
+- il résout le suivi, donc construit le registre : une définition invalide lève `DefinitionInvalideException` au démarrage plutôt qu'au premier usage ;
+- il liste les instances en cours que le code livré ne sait plus faire avancer : définition ou nœud retiré sans correspondance, ou nœud devenu d'une autre nature d'attente.
+
+Le moteur n'exécute jamais cette vérification seul : c'est à l'application de l'appeler, au démarrage ou à la livraison d'une définition modifiée. `ISuiviSentier` offre aussi la migration des instances et les diagrammes Mermaid (guide, section 9).
 
 ## 10. Liste de contrôle
 
@@ -315,4 +323,4 @@ Cet appel fait deux choses :
 - [ ] Dépendances des handlers enregistrées ; test de composition en place.
 - [ ] Chaque appel au moteur dans un `TransactionScope` avec `TransactionScopeAsyncFlowOption.Enabled`.
 - [ ] Traitement planifié des échéances, si une définition utilise `AttenteTemps` ou `Echeance`.
-- [ ] `VerifierInstancesAsync` appelé au démarrage.
+- [ ] `ISuiviSentier.VerifierInstancesAsync` appelé au démarrage, ou à chaque livraison qui modifie une définition.

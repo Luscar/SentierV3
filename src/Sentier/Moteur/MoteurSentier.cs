@@ -202,12 +202,6 @@ public sealed class MoteurSentier : IMoteurSentier
         return Etat(tete, enCours.FirstOrDefault(i => i.Attente != TypeAttente.SousProcessus) ?? tete);
     }
 
-    public async Task<IReadOnlyList<InstanceOrpheline>> VerifierInstancesAsync(CancellationToken cancellationToken = default)
-        => (await _depot.EnCoursAsync(cancellationToken))
-            .Where(i => !_registre.Definitions.Any(d => d.Cle == i.CleDefinition && d.Resoudre(i.NoeudCourant) is not null))
-            .Select(i => new InstanceOrpheline(i.Id, i.CleCorrelation, i.CleDefinition, i.NoeudCourant))
-            .ToArray();
-
     /// <summary>Exécute les nœuds de l'instance à partir de <paramref name="depart"/>, jusqu'à une attente ou une fin.</summary>
     private async Task AvancerAsync(Appel appel, Instance instance, string depart)
     {

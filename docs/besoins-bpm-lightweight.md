@@ -33,7 +33,10 @@ Principe directeur : à chaque sollicitation (démarrage, fin de tâche, signal,
 - **B-DEF-4** Décision : les définitions vivent uniquement en code ; elles ne sont pas enregistrées en base. Une instance n'est **pas** liée à une version : elle ne conserve que la clé de sa définition, son nœud courant et ses données. Quand le code change, toutes les instances en cours suivent la nouvelle définition à leur prochaine sollicitation (comportement attendu par les utilisateurs, comme avec RHPAM aujourd'hui).
 - **B-DEF-5** Conséquence : l'identifiant d'un nœud est un contrat. Le renommer ou le retirer touche les instances qui y sont arrêtées.
 - **B-DEF-6** Migration des instances en cours : quand un nœud est retiré ou renommé, la définition déclare une correspondance « ancien nœud → nouveau nœud ». Une instance arrêtée sur l'ancien nœud est replacée sur le nouveau à sa prochaine sollicitation.
-- **B-DEF-7** **[Proposition]** Au démarrage de l'application, une vérification signale les instances arrêtées sur un nœud inconnu et sans correspondance.
+- **B-DEF-7** Décision : une interface de suivi (`ISuiviSentier`), séparée des points d'entrée du moteur, regroupe ce qui ne fait avancer aucune instance. Le moteur ne l'appelle jamais ; le client l'exécute quand une définition change. Elle offre :
+  - la vérification des instances en cours que le code livré ne sait plus faire avancer (définition ou nœud retiré sans correspondance, nœud devenu d'une autre nature d'attente) ;
+  - la migration : les correspondances (B-DEF-6) sont appliquées en base aux instances en cours, ce qui permet de les retirer ensuite du code ;
+  - le diagramme Mermaid d'une définition, et celui d'un arbre d'instances avec le nœud courant et, si l'historique est actif, les nœuds traversés.
 
 Esquisse d'API, à titre indicatif seulement :
 

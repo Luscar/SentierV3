@@ -41,6 +41,8 @@ public class AutofacTests
 
         Assert.Equal("verification", etat.NoeudCourant);
         Assert.Contains("avis:AVIS_RECEPTION:fr", scope.Resolve<Journal>().Lignes);
+        Assert.Contains("DeclOrign", scope.Resolve<ISuiviSentier>().ClesDefinitions);
+        Assert.Empty(await scope.Resolve<ISuiviSentier>().VerifierInstancesAsync());
         Assert.Single(scope.Resolve<IEnumerable<IEcouteurFinProcessus>>()); // EcouteurEnMemoire, découvert par balayage
     }
 }
