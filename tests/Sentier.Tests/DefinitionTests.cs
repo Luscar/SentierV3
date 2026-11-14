@@ -55,6 +55,21 @@ public class DefinitionTests
     }
 
     [Fact]
+    public void Echeance_et_groupe_declares_deux_fois_ou_vers_un_noeud_inexistant()
+    {
+        var erreurs = Erreurs(p => p
+            .AttenteSignal("a", "s", s => s
+                .Groupe("G").Groupe("H")
+                .Echeance(TimeSpan.FromDays(1), "nulle-part").Echeance(TimeSpan.FromDays(2), "fin"))
+            .Interactif("t", "T", t => t.Echeance(Variable.Date("limite"), "ailleurs"))
+            .Fin("fin"));
+        Assert.Contains(erreurs, e => e.Contains("« a » : le groupe de corrélation est déclaré deux fois"));
+        Assert.Contains(erreurs, e => e.Contains("« a » : l'échéance est déclarée deux fois"));
+        Assert.Contains(erreurs, e => e.Contains("« nulle-part », qui n'existe pas"));
+        Assert.Contains(erreurs, e => e.Contains("« ailleurs », qui n'existe pas"));
+    }
+
+    [Fact]
     public void Dernier_noeud_qui_n_est_pas_une_fin()
         => Assert.Contains(Erreurs(p => p.AttenteSignal("a", "s")), e => e.Contains("n'est pas une fin"));
 

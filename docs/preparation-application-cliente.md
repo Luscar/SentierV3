@@ -136,7 +136,7 @@ Le moteur lit l'heure locale de `TimeProvider` pour les dates de démarrage, de 
 
 ### 4.3 Déclencheur d'échéances
 
-Ce n'est pas une interface de Sentier, mais le moteur n'a pas de minuterie. Si une définition utilise `AttenteTemps`, l'application doit avoir un traitement planifié qui appelle `ListerEcheancesDuesAsync` puis `DeclencherEcheanceAsync` (guide, section 6.5). Sans lui, ces instances restent en attente.
+Ce n'est pas une interface de Sentier, mais le moteur n'a pas de minuterie. Si une définition utilise `AttenteTemps` ou une escalade (`Echeance` sur un nœud interactif ou une attente de signal), l'application doit avoir un traitement planifié qui appelle `ListerEcheancesDuesAsync` puis `DeclencherEcheanceAsync` (guide, section 6.5). Sans lui, ces instances restent en attente.
 
 ## 5. Enregistrement avec Autofac
 
@@ -167,6 +167,7 @@ L'ordre des enregistrements n'a pas d'importance. Si les services de l'applicati
 | `IEcouteurFinProcessus` | Balayage | `As<IEcouteurFinProcessus>()`, par scope |
 | `IResolveurSentier` | — | Par scope ; résout les handlers dans le scope courant |
 | `IMoteurSentier` | — | Par scope |
+| `ISuiviSentier` | — | Par scope |
 
 ### Le balayage
 
@@ -217,13 +218,20 @@ foreach (var type in concrets.Where(t => typeof(IEcouteurFinProcessus).IsAssigna
 services.AddScoped<IAccesBDSentier, AccesBDSentier>();
 services.AddScoped<IBassinTaches, BassinTaches>();
 services.AddScoped<IResolveurSentier, ResolveurServices>();
-services.AddScoped<IMoteurSentier>(sp => new MoteurSentier(
+services.AddScoped(sp => new MoteurSentier(
     sp.GetRequiredService<RegistreDefinitions>(),
     sp.GetRequiredService<IAccesBDSentier>(),
     sp.GetRequiredService<IResolveurSentier>(),
     sp.GetRequiredService<IBassinTaches>(),
     sp.GetServices<IEcouteurFinProcessus>(),
     sp.GetRequiredService<OptionsSentier>(),
+    sp.GetService<TimeProvider>()));
+services.AddScoped<IMoteurSentier>(sp => sp.GetRequiredService<MoteurSentier>());
+services.AddScoped<ISuiviSentier>(sp => new SuiviSentier(
+    sp.GetRequiredService<RegistreDefinitions>(),
+    sp.GetRequiredService<IAccesBDSentier>(),
+    sp.GetRequiredService<OptionsSentier>(),
+    sp.GetRequiredService<MoteurSentier>(),      // le repositionnement exécute les nœuds par le moteur du scope
     sp.GetService<TimeProvider>()));
 ```
 
@@ -278,6 +286,8 @@ foreach (var script in SchemaSentier.Creation(DialecteSentier.Oracle, options))
 
 Objets créés : `AT_INSTANCE_TAXE`, `AT_HISTORIQUE_TAXE`, et les séquences `AT_S_INSTANCE_TAXE` et `AT_S_HISTORIQUE_TAXE`. La table d'historique est créée même si `HistoriqueActif` est à `false`.
 
+Une base créée avec une version antérieure doit recevoir la colonne `GROUPE_SIGNAL` (texte de 200, nulle) et son index sur la table des instances.
+
 **Transaction.** Le moteur n'en gère aucune. Chaque appel se fait dans un `TransactionScope` ouvert par l'appelant, avec le flux asynchrone activé :
 
 ```csharp
@@ -293,15 +303,17 @@ Le moteur, les handlers, le bassin et les écouteurs travaillent dans cette tran
 Au démarrage de l'application, dans un scope :
 
 ```csharp
-var orphelines = await moteur.VerifierInstancesAsync(ct);
+var orphelines = await suivi.VerifierInstancesAsync(ct);   // ISuiviSentier
 foreach (var o in orphelines)
-    journal.LogError("Instance {Id} ({Definition}) arrêtée sur le nœud inconnu {Noeud}", o.IdInstance, o.CleDefinition, o.Noeud);
+    journal.LogError("Instance {Id} ({Definition}) orpheline sur {Noeud} : {Raison}", o.IdInstance, o.CleDefinition, o.Noeud, o.Raison);
 ```
 
 Cet appel fait deux choses :
 
-- il résout le moteur, donc construit le registre : une définition invalide lève `DefinitionInvalideException` au démarrage plutôt qu'au premier usage ;
-- il liste les instances en cours arrêtées sur un nœud qui n'existe plus dans le code livré.
+- il résout le suivi, donc construit le registre : une définition invalide lève `DefinitionInvalideException` au démarrage plutôt qu'au premier usage ;
+- il liste les instances en cours que le code livré ne sait plus faire avancer : définition ou nœud retiré sans correspondance, ou nœud devenu d'une autre nature d'attente.
+
+Le moteur n'exécute jamais cette vérification seul : c'est à l'application de l'appeler, au démarrage ou à la livraison d'une définition modifiée. `ISuiviSentier` offre aussi la migration des instances, le repositionnement, la lecture de l'historique et les diagrammes Mermaid (guide, section 9).
 
 ## 10. Liste de contrôle
 
@@ -312,5 +324,5 @@ Cet appel fait deux choses :
 - [ ] `ModuleSentier` enregistré avec toutes les assemblies de définitions, de handlers et d'écouteurs (ou enregistrement manuel de la section 6).
 - [ ] Dépendances des handlers enregistrées ; test de composition en place.
 - [ ] Chaque appel au moteur dans un `TransactionScope` avec `TransactionScopeAsyncFlowOption.Enabled`.
-- [ ] Traitement planifié des échéances, si une définition utilise `AttenteTemps`.
-- [ ] `VerifierInstancesAsync` appelé au démarrage.
+- [ ] Traitement planifié des échéances, si une définition utilise `AttenteTemps` ou `Echeance`.
+- [ ] `ISuiviSentier.VerifierInstancesAsync` appelé au démarrage, ou à chaque livraison qui modifie une définition.

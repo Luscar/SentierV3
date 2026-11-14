@@ -129,6 +129,40 @@ public class MoteurTests
         Assert.Equal([etat.RefTache!.Value], banc.Bassin.Annulees);
         Assert.Equal(2, banc.Ecouteur.Fins.Count(f => f.Statut == StatutInstance.Annulee));
         await Assert.ThrowsAsync<TacheIntrouvableException>(() => banc.Moteur.CompleterTacheAsync(etat.RefTache.Value, "bob"));
+
+        // L'historique dit où chaque instance a été annulée, de la feuille vers la tête.
+        var annulations = await banc.Bd.QueryAsync<string>(
+            "SELECT NOEUD || ':' || ACTEUR FROM AT_HISTORIQUE_TAXE WHERE EVENEMENT = 'ANNULATION' ORDER BY ID_HISTORIQUE");
+        Assert.Equal(["comptabiliser:chef", "comptabilisation:chef"], annulations);
+    }
+
+    [Fact]
+    public async Task Attente_de_temps_sur_une_variable_absente()
+    {
+        using var banc = new Banc(new Rappel());
+        await Assert.ThrowsAsync<SentierException>(() => banc.Moteur.DemarrerAsync(new DemandeDemarrage("Rappel", 1, "r1", "alice")));
+
+        var date = banc.Horloge.Maintenant.DateTime.AddDays(3);
+        var etat = await banc.Moteur.DemarrerAsync(
+            new DemandeDemarrage("Rappel", 1, "r2", "alice") { Donnees = new Donnees().Avec(Rappel.Date, date) });
+        Assert.Equal(date, etat.DateEcheance);
+    }
+
+    [Fact]
+    public async Task Code_inconnu_en_base()
+    {
+        using var banc = new Banc();
+        await banc.Moteur.DemarrerAsync(banc.Demande());
+        await banc.Bd.ExecuteNonQueryAsync("UPDATE AT_INSTANCE_TAXE SET STATUT = 'BIZARRE'");
+        await Assert.ThrowsAsync<SentierException>(() => banc.Moteur.ObtenirEtatAsync("cle-1"));
+    }
+
+    private sealed class Rappel : IDefinitionProcessus
+    {
+        public static readonly Variable<DateTime> Date = Variable.Date("date");
+        public string Cle => "Rappel";
+
+        public void Definir(IProcessusBuilder p) => p.AttenteTemps("attendre", Date).Fin("fin");
     }
 
     [Fact]
@@ -159,19 +193,16 @@ public class MoteurTests
     }
 
     [Fact]
-    public async Task Noeud_renomme_et_verification_au_demarrage()
+    public async Task Noeud_renomme()
     {
         using var banc = new Banc();
         var etat = await banc.Moteur.DemarrerAsync(banc.Demande());
 
         // Nouvelle version du code : le nœud « verification » s'appelle maintenant « controle ».
         var sansCorrespondance = banc.CreerMoteur(new Renommee(false), new Identification(), new Comptabilisation());
-        var orpheline = Assert.Single(await sansCorrespondance.VerifierInstancesAsync());
-        Assert.Equal("verification", orpheline.Noeud);
         await Assert.ThrowsAsync<NoeudInconnuException>(() => sansCorrespondance.CompleterTacheAsync(etat.RefTache!.Value, "bob"));
 
         var avecCorrespondance = banc.CreerMoteur(new Renommee(true), new Identification(), new Comptabilisation());
-        Assert.Empty(await avecCorrespondance.VerifierInstancesAsync());
         Assert.Equal("controle", (await avecCorrespondance.ObtenirEtatAsync("cle-1"))!.NoeudCourant);
         var suite = await avecCorrespondance.CompleterTacheAsync(etat.RefTache!.Value, "bob");
         Assert.Equal(StatutInstance.Terminee, suite.Statut);
@@ -197,7 +228,138 @@ public class MoteurTests
             noeuds);
     }
 
-    private sealed class Renommee(bool correspondance) : IDefinitionProcessus
+    [Fact]
+    public async Task Abonnement_a_un_groupe_de_correlation()
+    {
+        using var banc = new Banc(new Blocage());
+        DemandeDemarrage Demande(string cle, string groupe)
+            => new("Blocage", 1, cle, "alice") { Donnees = new Donnees().Avec(Blocage.Groupe, groupe) };
+
+        var etat = await banc.Moteur.DemarrerAsync(Demande("a", "EMP-1"));
+        Assert.Equal("EMP-1", etat.GroupeSignal);
+        await banc.Moteur.DemarrerAsync(Demande("b", "EMP-1"));
+        await banc.Moteur.DemarrerAsync(Demande("c", "EMP-2"));
+
+        // Seules les instances abonnées au groupe avancent ; l'abonnement cesse avec l'attente.
+        Assert.Empty(await banc.Moteur.SignalerGroupeAsync("EMP-1", "inconnu", "sys"));
+        var etats = await banc.Moteur.SignalerGroupeAsync("EMP-1", "debloquee", "sys");
+        Assert.Equal(["a", "b"], etats.Select(e => e.CleCorrelation));
+        Assert.All(etats, e => Assert.Equal(StatutInstance.Terminee, e.Statut));
+        Assert.Empty(await banc.Moteur.SignalerGroupeAsync("EMP-1", "debloquee", "sys"));
+
+        var reste = await banc.Moteur.ObtenirEtatAsync("c");
+        Assert.True(reste!.EnCours);
+        Assert.Equal("EMP-2", reste.GroupeSignal);
+
+        // Le signal ciblé par clé de corrélation atteint toujours le nœud, et désabonne l'instance.
+        Assert.True((await banc.Moteur.SignalerAsync("c", "debloquee", "sys")).Traitee);
+        Assert.Empty(await banc.Moteur.SignalerGroupeAsync("EMP-2", "debloquee", "sys"));
+
+        // Variable du groupe absente à l'arrivée sur le nœud : erreur plutôt qu'un abonnement vide.
+        await Assert.ThrowsAsync<SentierException>(() => banc.Moteur.DemarrerAsync(new DemandeDemarrage("Blocage", 1, "d", "alice")));
+    }
+
+    [Fact]
+    public async Task Escalade_d_une_attente_de_signal_et_d_une_tache()
+    {
+        using var banc = new Banc(new Escalades());
+        var moteur = banc.Moteur;
+        var debut = banc.Horloge.Maintenant.DateTime;
+
+        var etat = await moteur.DemarrerAsync(new DemandeDemarrage("Escalades", 1, "e", "alice"));
+        Assert.Equal("attente", etat.NoeudCourant);
+        Assert.Equal(debut.AddDays(5), etat.DateEcheance);
+
+        // Pas encore due : rien ne bouge.
+        Assert.Empty(await moteur.ListerEcheancesDuesAsync(banc.Horloge.Maintenant.DateTime));
+        Assert.False((await moteur.DeclencherEcheanceAsync(etat.IdInstance, "sys")).Traitee);
+
+        // Délai dépassé sans signal : l'instance va au nœud d'escalade, ici une tâche avec sa propre échéance.
+        banc.Horloge.Maintenant = banc.Horloge.Maintenant.AddDays(6);
+        var due = Assert.Single(await moteur.ListerEcheancesDuesAsync(banc.Horloge.Maintenant.DateTime));
+        var escalade = await moteur.DeclencherEcheanceAsync(due.IdInstance, "sys");
+        Assert.True(escalade.Traitee);
+        Assert.Equal("relance", escalade.Etat!.NoeudCourant);
+        Assert.Null(escalade.Etat.GroupeSignal);
+        Assert.Equal(banc.Horloge.Maintenant.DateTime.AddDays(1), escalade.Etat.DateEcheance);
+        var refTache = escalade.Etat.RefTache!.Value;
+
+        // Délai de la tâche dépassé : elle est annulée dans le bassin, sans action « après ».
+        banc.Horloge.Maintenant = banc.Horloge.Maintenant.AddDays(2);
+        var fin = await moteur.DeclencherEcheanceAsync(etat.IdInstance, "sys");
+        Assert.Equal("abandonnee", fin.Etat!.NomFin);
+        Assert.Equal([refTache], banc.Bassin.Annulees);
+        Assert.Empty(banc.Journal.Lignes);
+        await Assert.ThrowsAsync<TacheIntrouvableException>(() => moteur.CompleterTacheAsync(refTache, "bob"));
+
+        var transitions = await banc.Bd.QueryAsync<string>(
+            "SELECT NOEUD FROM AT_HISTORIQUE_TAXE WHERE TRANSITION = 'echeance' ORDER BY ID_HISTORIQUE");
+        Assert.Equal(["attente", "relance"], transitions);
+    }
+
+    [Fact]
+    public async Task Une_attente_quittee_a_temps_n_a_plus_d_echeance()
+    {
+        using var banc = new Banc(new Escalades());
+        var etat = await banc.Moteur.DemarrerAsync(new DemandeDemarrage("Escalades", 1, "e", "alice"));
+        var signal = await banc.Moteur.SignalerAsync("e", "reponse", "sys");
+        Assert.Equal("traitee", signal.Etat!.NomFin);
+
+        banc.Horloge.Maintenant = banc.Horloge.Maintenant.AddDays(6);
+        Assert.Empty(await banc.Moteur.ListerEcheancesDuesAsync(banc.Horloge.Maintenant.DateTime));
+        Assert.False((await banc.Moteur.DeclencherEcheanceAsync(etat.IdInstance, "sys")).Traitee);
+    }
+
+    [Fact]
+    public async Task Echeance_retiree_de_la_definition()
+    {
+        using var banc = new Banc(new Escalades());
+        var etat = await banc.Moteur.DemarrerAsync(new DemandeDemarrage("Escalades", 1, "e", "alice"));
+        banc.Horloge.Maintenant = banc.Horloge.Maintenant.AddDays(6);
+
+        // Nouvelle version du code, sans échéance : l'instance continue d'attendre et n'est plus listée.
+        var moteur = banc.CreerMoteur(new Escalades(false));
+        Assert.False((await moteur.DeclencherEcheanceAsync(etat.IdInstance, "sys")).Traitee);
+        Assert.Empty(await moteur.ListerEcheancesDuesAsync(banc.Horloge.Maintenant.DateTime));
+        Assert.Equal("attente", (await moteur.ObtenirEtatAsync("e"))!.NoeudCourant);
+    }
+
+    private sealed class Blocage : IDefinitionProcessus
+    {
+        public static readonly Variable<string> Groupe = Variable.Texte("groupe");
+        public string Cle => "Blocage";
+
+        public void Definir(IProcessusBuilder p) => p
+            .AttenteSignal("attente-deblocage", "debloquee", s => s.Groupe(Groupe))
+            .Fin("cotisee");
+    }
+
+    private sealed class Escalades(bool avecEcheance = true) : IDefinitionProcessus
+    {
+        public string Cle => "Escalades";
+
+        public void Definir(IProcessusBuilder p)
+        {
+            if (!avecEcheance)
+            {
+                p.AttenteSignal("attente", "reponse", s => s.Groupe("LOT")).Fin("traitee");
+                return;
+            }
+
+            p.AttenteSignal("attente", "reponse", s => s
+                    .Groupe("LOT")
+                    .Echeance(TimeSpan.FromDays(5), "relance"))
+                .Fin("traitee")
+
+                .Interactif("relance", "RELANCE", t => t
+                    .Apres<ConsignerVerification>()
+                    .Echeance(TimeSpan.FromDays(1), "fin-abandon"))
+                .Aller("traitee")
+                .Fin("fin-abandon", "abandonnee");
+        }
+    }
+
+    internal sealed class Renommee(bool correspondance) : IDefinitionProcessus
     {
         public string Cle => "DeclOrign";
 

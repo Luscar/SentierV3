@@ -7,7 +7,7 @@ internal sealed class Depot(IAccesBDSentier bd, NomsSentier noms, TimeProvider h
         SELECT ID_INSTANCE AS IdInstance, ID_AFFAIRE AS IdAffaire, CLE_CORRELATION AS CleCorrelation,
                CLE_DEFINITION AS CleDefinition, ID_INSTANCE_PARENT AS IdInstanceParent, NOEUD_COURANT AS NoeudCourant,
                STATUT AS Statut, NOM_FIN AS NomFin, TYPE_ATTENTE AS TypeAttente, REF_TACHE AS RefTache,
-               DATE_ECHEANCE AS DateEcheance, DONNEES AS Donnees, NO_VERSION AS NoVersion,
+               DATE_ECHEANCE AS DateEcheance, GROUPE_SIGNAL AS GroupeSignal, DONNEES AS Donnees, NO_VERSION AS NoVersion,
                ACTEUR_DEMARRAGE AS ActeurDemarrage, DATE_DEMARRAGE AS DateDemarrage, DATE_FIN AS DateFin
           FROM {noms.TableInstance}
         """;
@@ -21,11 +21,11 @@ internal sealed class Depot(IAccesBDSentier bd, NomsSentier noms, TimeProvider h
         await bd.ExecuteNonQueryAsync($"""
             INSERT INTO {noms.TableInstance}
                 (ID_INSTANCE, ID_AFFAIRE, CLE_CORRELATION, CLE_DEFINITION, ID_INSTANCE_PARENT, NOEUD_COURANT, STATUT,
-                 NOM_FIN, TYPE_ATTENTE, REF_TACHE, DATE_ECHEANCE, DONNEES, NO_VERSION, ACTEUR_DEMARRAGE,
+                 NOM_FIN, TYPE_ATTENTE, REF_TACHE, DATE_ECHEANCE, GROUPE_SIGNAL, DONNEES, NO_VERSION, ACTEUR_DEMARRAGE,
                  DATE_DEMARRAGE, DATE_MODIFICATION, DATE_FIN)
             VALUES
                 (:IdInstance, :IdAffaire, :CleCorrelation, :CleDefinition, :IdInstanceParent, :NoeudCourant, :Statut,
-                 :NomFin, :TypeAttente, :RefTache, :DateEcheance, :Donnees, :NoVersion, :ActeurDemarrage,
+                 :NomFin, :TypeAttente, :RefTache, :DateEcheance, :GroupeSignal, :Donnees, :NoVersion, :ActeurDemarrage,
                  :DateDemarrage, :DateModification, :DateFin)
             """,
             new
@@ -41,6 +41,7 @@ internal sealed class Depot(IAccesBDSentier bd, NomsSentier noms, TimeProvider h
                 TypeAttente = Codes.De(instance.Attente),
                 instance.RefTache,
                 instance.DateEcheance,
+                instance.GroupeSignal,
                 Donnees = instance.Variables.VersJson(),
                 instance.NoVersion,
                 instance.ActeurDemarrage,
@@ -56,7 +57,7 @@ internal sealed class Depot(IAccesBDSentier bd, NomsSentier noms, TimeProvider h
         var lignes = await bd.ExecuteNonQueryAsync($"""
             UPDATE {noms.TableInstance}
                SET NOEUD_COURANT = :NoeudCourant, STATUT = :Statut, NOM_FIN = :NomFin, TYPE_ATTENTE = :TypeAttente,
-                   REF_TACHE = :RefTache, DATE_ECHEANCE = :DateEcheance, DONNEES = :Donnees,
+                   REF_TACHE = :RefTache, DATE_ECHEANCE = :DateEcheance, GROUPE_SIGNAL = :GroupeSignal, DONNEES = :Donnees,
                    NO_VERSION = NO_VERSION + 1, DATE_MODIFICATION = :DateModification, DATE_FIN = :DateFin
              WHERE ID_INSTANCE = :IdInstance AND NO_VERSION = :NoVersion
             """,
@@ -68,6 +69,7 @@ internal sealed class Depot(IAccesBDSentier bd, NomsSentier noms, TimeProvider h
                 TypeAttente = Codes.De(instance.Attente),
                 instance.RefTache,
                 instance.DateEcheance,
+                instance.GroupeSignal,
                 Donnees = instance.Variables.VersJson(),
                 DateModification = Maintenant,
                 instance.DateFin,
@@ -106,13 +108,58 @@ internal sealed class Depot(IAccesBDSentier bd, NomsSentier noms, TimeProvider h
                 $"{Selection} WHERE STATUT = 'EN_COURS' AND TYPE_ATTENTE = 'SIGNAL' AND CLE_DEFINITION = :CleDefinition ORDER BY ID_INSTANCE",
                 new { CleDefinition = cleDefinition }, ct));
 
+    /// <summary>Instances abonnées au groupe de corrélation : seules celles-là sont lues.</summary>
+    public async Task<List<Instance>> AbonneesAuGroupeAsync(string groupe, CancellationToken ct)
+        => Vers(await bd.QueryAsync<LigneInstance>(
+            $"{Selection} WHERE GROUPE_SIGNAL = :GroupeSignal AND STATUT = 'EN_COURS' AND TYPE_ATTENTE = 'SIGNAL' ORDER BY ID_INSTANCE",
+            new { GroupeSignal = groupe }, ct));
+
+    /// <summary>Attentes de temps et escalades dues. Le filtre sur le type d'attente suit l'index (STATUT, TYPE_ATTENTE, DATE_ECHEANCE).</summary>
     public async Task<List<Instance>> EcheancesDuesAsync(DateTime instant, CancellationToken ct)
         => Vers(await bd.QueryAsync<LigneInstance>(
-            $"{Selection} WHERE STATUT = 'EN_COURS' AND DATE_ECHEANCE IS NOT NULL AND DATE_ECHEANCE <= :Instant ORDER BY DATE_ECHEANCE",
+            $"{Selection} WHERE STATUT = 'EN_COURS' AND TYPE_ATTENTE IN ('TEMPS', 'TACHE', 'SIGNAL') AND DATE_ECHEANCE <= :Instant ORDER BY DATE_ECHEANCE",
             new { Instant = instant }, ct));
 
-    public async Task<List<Instance>> EnCoursAsync(CancellationToken ct)
-        => Vers(await bd.QueryAsync<LigneInstance>($"{Selection} WHERE STATUT = 'EN_COURS' ORDER BY ID_INSTANCE", null, ct));
+    /// <summary>Points d'arrêt distincts des instances en cours : quelques lignes, sans les variables.</summary>
+    public async Task<List<LigneArret>> ArretsAsync(CancellationToken ct)
+        => (await bd.QueryAsync<LigneArret>($"""
+            SELECT DISTINCT CLE_DEFINITION AS CleDefinition, NOEUD_COURANT AS NoeudCourant, TYPE_ATTENTE AS TypeAttente
+              FROM {noms.TableInstance}
+             WHERE STATUT = 'EN_COURS'
+             ORDER BY CLE_DEFINITION, NOEUD_COURANT, TYPE_ATTENTE
+            """, null, ct)).ToList();
+
+    public async Task<List<Instance>> ArretesSurAsync(LigneArret arret, CancellationToken ct)
+        => Vers(await bd.QueryAsync<LigneInstance>(
+            $"{Selection} WHERE STATUT = 'EN_COURS' AND CLE_DEFINITION = :CleDefinition AND NOEUD_COURANT = :NoeudCourant AND {FiltreAttente(arret)} ORDER BY ID_INSTANCE",
+            new { arret.CleDefinition, arret.NoeudCourant, arret.TypeAttente }, ct));
+
+    /// <summary>Replace sur un nouveau nœud toutes les instances en cours d'un point d'arrêt ; retourne leur nombre.</summary>
+    public Task<int> DeplacerAsync(LigneArret arret, string nouveauNoeud, CancellationToken ct)
+        => bd.ExecuteNonQueryAsync($"""
+            UPDATE {noms.TableInstance}
+               SET NOEUD_COURANT = :NouveauNoeud, NO_VERSION = NO_VERSION + 1, DATE_MODIFICATION = :DateModification
+             WHERE STATUT = 'EN_COURS' AND CLE_DEFINITION = :CleDefinition AND NOEUD_COURANT = :NoeudCourant AND {FiltreAttente(arret)}
+            """,
+            new { NouveauNoeud = nouveauNoeud, DateModification = Maintenant, arret.CleDefinition, arret.NoeudCourant, arret.TypeAttente }, ct);
+
+    private static string FiltreAttente(LigneArret arret) => arret.TypeAttente is null ? "TYPE_ATTENTE IS NULL AND :TypeAttente IS NULL" : "TYPE_ATTENTE = :TypeAttente";
+
+    /// <summary>Historique de tout l'arbre d'une clé de corrélation, dans l'ordre des événements.</summary>
+    public async Task<List<LigneHistorique>> HistoriqueAsync(string cleCorrelation, CancellationToken ct)
+        => (await bd.QueryAsync<LigneHistorique>($"""
+            SELECT H.ID_INSTANCE AS IdInstance, I.CLE_DEFINITION AS CleDefinition, H.NOEUD AS Noeud, H.EVENEMENT AS Evenement,
+                   H.TRANSITION AS Transition, H.ACTEUR AS Acteur, H.DATE_EVENEMENT AS DateEvenement
+              FROM {noms.TableHistorique} H
+              JOIN {noms.TableInstance} I ON I.ID_INSTANCE = H.ID_INSTANCE
+             WHERE I.CLE_CORRELATION = :CleCorrelation
+             ORDER BY H.ID_HISTORIQUE
+            """, new { CleCorrelation = cleCorrelation }, ct)).ToList();
+
+    public async Task<IReadOnlySet<string>> NoeudsVisitesAsync(long idInstance, CancellationToken ct)
+        => (await bd.QueryAsync<string>(
+            $"SELECT DISTINCT NOEUD FROM {noms.TableHistorique} WHERE ID_INSTANCE = :IdInstance", new { IdInstance = idInstance }, ct))
+            .ToHashSet(StringComparer.Ordinal);
 
     public async Task HistoriserAsync(Instance instance, string noeud, string evenement, string? transition, string acteur, CancellationToken ct)
     {
@@ -148,6 +195,7 @@ internal sealed class Depot(IAccesBDSentier bd, NomsSentier noms, TimeProvider h
         Attente = Codes.Attente(ligne.TypeAttente),
         RefTache = ligne.RefTache,
         DateEcheance = ligne.DateEcheance,
+        GroupeSignal = ligne.GroupeSignal,
         Variables = Variables.DeJson(ligne.Donnees),
         NoVersion = ligne.NoVersion,
         ActeurDemarrage = ligne.ActeurDemarrage ?? "",

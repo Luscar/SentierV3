@@ -19,7 +19,10 @@ public sealed record EtatInstance
     public TypeAttente? TypeAttente { get; init; }
     public string? CodeTache { get; init; }
     public long? RefTache { get; init; }
+    /// <summary>Échéance d'une attente de temps, ou de l'escalade d'une tâche ou d'une attente de signal.</summary>
     public DateTime? DateEcheance { get; init; }
+    /// <summary>Groupe de corrélation auquel l'instance est abonnée pendant son attente de signal.</summary>
+    public string? GroupeSignal { get; init; }
     public IReadOnlyList<string> SignauxAttendus { get; init; } = [];
     public required Variables Variables { get; init; }
 }

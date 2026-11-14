@@ -12,8 +12,9 @@ L'exemple suivi tout au long du guide est une demande de remboursement. Un exemp
 - [6. Piloter les instances](#6-piloter-les-instances)
 - [7. Réagir à la fin d'un processus](#7-réagir-à-la-fin-dun-processus)
 - [8. Faire évoluer une définition](#8-faire-évoluer-une-définition)
-- [9. Tester](#9-tester)
-- [10. Exceptions](#10-exceptions)
+- [9. Suivre et exploiter](#9-suivre-et-exploiter)
+- [10. Tester](#10-tester)
+- [11. Exceptions](#11-exceptions)
 
 ## 1. Les notions
 
@@ -139,7 +140,7 @@ Options disponibles :
 | Option | Défaut | Effet |
 |---|---|---|
 | `Prefixe`, `Suffixe` | vides | Noms des tables et des séquences. |
-| `HistoriqueActif` | `false` | Consigne chaque entrée et sortie de nœud dans la table `HISTORIQUE`. |
+| `HistoriqueActif` | `false` | Consigne chaque entrée et sortie de nœud, et chaque annulation, dans la table `HISTORIQUE`. |
 | `NombreMaxEtapes` | `1000` | Nombre maximal de nœuds exécutés par appel, contre les boucles sans fin. |
 
 **Sans Autofac**, vous construisez le moteur vous-même et fournissez un `IResolveurSentier` qui crée les handlers :
@@ -166,15 +167,15 @@ Tout ce que font le moteur, les commandes, le bassin et les écouteurs pendant l
 
 ### 2.7 Vérifier les instances au démarrage
 
-Au démarrage de l'application, `VerifierInstancesAsync` liste les instances en cours arrêtées sur un nœud qui n'existe plus dans le code livré (voir la section 8) :
+Le moteur ne vérifie rien seul. Quand une définition change, c'est à l'application d'appeler `ISuiviSentier.VerifierInstancesAsync`, qui liste les instances en cours que le code livré ne sait plus faire avancer (section 9). L'appeler au démarrage de l'application est le plus simple :
 
 ```csharp
-var orphelines = await moteur.VerifierInstancesAsync(ct);
+var orphelines = await suivi.VerifierInstancesAsync(ct);
 foreach (var o in orphelines)
-    journal.LogError("Instance {Id} ({Definition}) arrêtée sur le nœud inconnu {Noeud}", o.IdInstance, o.CleDefinition, o.Noeud);
+    journal.LogError("Instance {Id} ({Definition}) orpheline sur {Noeud} : {Raison}", o.IdInstance, o.CleDefinition, o.Noeud, o.Raison);
 ```
 
-Ce premier appel construit aussi le registre, donc une définition invalide est signalée dès le démarrage plutôt qu'au premier usage.
+La résolution du suivi construit aussi le registre, donc une définition invalide est signalée dès le démarrage plutôt qu'au premier usage.
 
 ## 3. Définir un processus
 
@@ -261,14 +262,52 @@ public sealed class Paiement : IDefinitionProcessus
 - `Avant<TCommande>()` s'exécute dans l'appel qui crée la tâche, juste avant sa création.
 - `Apres<TCommande>()` s'exécute dans l'appel qui complète la tâche.
 - `Sur(transition, noeud)` déclare une transition nommée. À la complétion, l'appelant choisit une transition ; sans transition, l'instance va au nœud suivant.
+- `Echeance(duree, noeud)` ou `Echeance(variableDate, noeud)` déclare une escalade (voir plus bas).
 
 **Attente d'un signal.**
 
 - Le signal donné à `AttenteSignal` mène au nœud suivant.
 - `Signal(autreSignal, noeud)` accepte un autre signal, qui mène à son propre nœud.
 - `Sur(transition, noeud)` déclare une transition que l'émetteur du signal peut nommer pour choisir la destination.
+- `Groupe(variable)` ou `Groupe("valeur")` abonne l'instance à un groupe de corrélation (voir plus bas).
+- `Echeance(duree, noeud)` ou `Echeance(variableDate, noeud)` déclare une escalade (voir plus bas).
 
-**Attente d'un délai.** L'échéance est calculée à l'arrivée sur le nœud. Avec une variable, celle-ci doit avoir été écrite avant : absente, elle vaut la date minimale et l'échéance est due tout de suite. Le moteur ne déclenche rien seul (section 6.4).
+**Groupe de corrélation.** Une attente de signal peut s'abonner à un groupe : un seul envoi au groupe atteint alors toutes les instances abonnées (section 6.4).
+
+```csharp
+public static readonly Variable<string> GroupeBlocage = Variable.Texte("groupeBlocage");
+
+.Systeme<TrouverBlocage>("trouver-blocage")                    // écrit GroupeBlocage
+.Decision<CotisationEstBloquee>("cotisation-bloquee", d => d
+    .Si(true, "attente-deblocage")
+    .Sinon("cotiser"))
+.AttenteSignal("attente-deblocage", "cotisation-debloquee", s => s
+    .Groupe(GroupeBlocage)
+    .Echeance(TimeSpan.FromDays(30), "cotisation-bloquee"))    // filet : revérifie le blocage
+.Systeme<Cotiser>("cotiser")
+```
+
+- L'instance s'abonne en arrivant sur le nœud et se désabonne en le quittant, quelle que soit la sortie (signal, échéance, annulation). Elle peut s'abonner à d'autres groupes à d'autres nœuds.
+- Avec une variable, celle-ci doit avoir été écrite avant l'arrivée sur le nœud : absente ou vide, le moteur lève `SentierException`.
+- Le groupe est une valeur opaque ; donnez-lui un nom qui dit ce qui est attendu, par exemple `BLOCAGE-COTISATION:employeur-123`.
+- Le signal ciblé par clé de corrélation atteint toujours ce nœud.
+- **Le moteur ne mémorise pas les signaux.** Une instance qui arrive sur l'attente pendant que le signal de groupe est envoyé peut le manquer : sa transaction a lu « bloquée », l'envoi ne la voit pas encore, et elle attend ensuite un signal qui ne reviendra pas. Sérialisez les deux dans le domaine : la requête qui précède l'attente lit la ligne du blocage avec `FOR UPDATE`, et le déblocage modifie cette même ligne dans la transaction qui envoie le signal. L'échéance de l'exemple est un filet, pas la correction.
+
+**Escalade.** `Echeance` sur un nœud interactif ou une attente de signal évite qu'une instance reste bloquée indéfiniment : le délai dépassé, l'instance va au nœud d'escalade.
+
+```csharp
+.Interactif("approbation", "APPROB", t => t
+    .Echeance(TimeSpan.FromDays(10), "relance-gestionnaire"))
+```
+
+- L'échéance est calculée à l'arrivée sur le nœud. Avec une variable, celle-ci doit avoir été écrite avant : absente, le moteur lève `SentierException`.
+- Rien ne se déclenche seul : c'est le traitement planifié des échéances qui fait avancer l'instance (section 6.5).
+- Pour un nœud interactif, la tâche ouverte est annulée dans le bassin (`AnnulerTacheAsync`) et la commande `Apres` n'est pas exécutée.
+- Un nœud quitté à temps n'a plus d'échéance.
+- Dans l'historique, la sortie par escalade porte la transition `echeance`.
+- Si une nouvelle version de la définition retire l'échéance du nœud, les instances déjà arrêtées dessus continuent d'attendre, sans échéance.
+
+**Attente d'un délai.** L'échéance est calculée à l'arrivée sur le nœud. Avec une variable, celle-ci doit avoir été écrite avant : absente, le moteur lève `SentierException`. Le moteur ne déclenche rien seul (section 6.5).
 
 **Sous-processus.**
 
@@ -312,7 +351,7 @@ La définition est validée à la construction du registre. `DefinitionInvalideE
 - décision sans `Sinon`, ou valeur de `Si` d'un autre type que le résultat ;
 - nœud inatteignable, ou nœud qui n'aboutit à aucune fin ;
 - paramètre obligatoire d'une commande ou d'une requête non fourni ;
-- signal déclaré deux fois sur un même nœud ;
+- signal, groupe de corrélation ou échéance déclaré deux fois sur un même nœud ;
 - correspondance invalide ;
 - sous-processus inconnu, ou deux définitions de même clé.
 
@@ -460,7 +499,8 @@ Chaque appel retourne un `EtatInstance` ; `ObtenirEtatAsync(cleCorrelation)` le 
 | `IdInstanceActive`, `CleDefinitionActive` | L'instance qui porte le nœud actif : la tête ou un sous-processus. |
 | `NoeudCourant`, `TypeAttente` | Où l'instance est arrêtée, et sur quoi (`Tache`, `Signal`, `Temps`). |
 | `CodeTache`, `RefTache` | La tâche attendue. |
-| `DateEcheance` | L'échéance attendue. |
+| `DateEcheance` | L'échéance attendue : attente de temps, ou escalade d'une tâche ou d'une attente de signal. |
+| `GroupeSignal` | Le groupe de corrélation auquel l'instance est abonnée. |
 | `SignauxAttendus` | Les signaux acceptés par le nœud. |
 | `Variables` | Une copie des variables de l'instance active. |
 
@@ -490,11 +530,16 @@ if (!resultat.Traitee) { /* rien n'attendait ce signal */ }
 
 // à toutes les instances qui l'attendent
 var etats = await moteur.DiffuserSignalAsync("paiement-rejete", "systeme-bancaire", cancellationToken: ct);
+
+// aux instances abonnées à un groupe de corrélation
+var debloquees = await moteur.SignalerGroupeAsync("BLOCAGE-COTISATION:employeur-123", "cotisation-debloquee", "agent", cancellationToken: ct);
 ```
 
 - Un signal que rien n'attend n'est pas une erreur : `Traitee` vaut `false` et l'instance ne bouge pas. Le signal n'est pas mis en file ; il est perdu.
 - `cleDefinition` limite la remise aux instances de cette définition.
 - `transition` et `donnees` s'utilisent comme pour une tâche.
+- `SignalerGroupeAsync` ne lit que les instances abonnées au groupe, et retourne l'état de celles qui ont avancé. Une instance abonnée qui n'attend pas ce signal est ignorée.
+- Un signal diffusé ou de groupe fait avancer toutes les instances dans la transaction de l'appel : si un handler échoue pour l'une d'elles, rien n'est validé pour aucune.
 
 ### 6.5 Déclencher les échéances
 
@@ -509,6 +554,8 @@ foreach (var echeance in await moteur.ListerEcheancesDuesAsync(DateTime.Now, ct)
 }
 ```
 
+La liste contient les attentes de temps et les escalades (section 3.3) ; l'appelant n'a pas à les distinguer.
+
 `DeclencherEcheanceAsync` est sans effet (`Traitee` à `false`) si l'échéance n'est pas due ou a déjà été déclenchée : le traitement peut tourner en plusieurs exemplaires ou être relancé.
 
 ### 6.6 Annuler
@@ -517,7 +564,7 @@ foreach (var echeance in await moteur.ListerEcheancesDuesAsync(DateTime.Now, ct)
 await moteur.AnnulerAsync("REMB-42", "chef", ct);
 ```
 
-L'annulation touche tout l'arbre : l'instance de tête et ses sous-processus en cours passent à `Annulee`, la tâche ouverte est annulée dans le bassin, et les écouteurs sont avisés pour chaque instance.
+L'annulation touche tout l'arbre : l'instance de tête et ses sous-processus en cours passent à `Annulee`, la tâche ouverte est annulée dans le bassin, et les écouteurs sont avisés pour chaque instance. Si l'historique est actif, chaque instance annulée y reçoit un événement `ANNULATION` sur son nœud courant.
 
 ### 6.7 Appels simultanés
 
@@ -560,11 +607,102 @@ public void Definir(IProcessusBuilder p) => p
 - Le nouveau nœud doit être un point d'attente de même nature que l'ancien (une tâche pour une tâche, un signal pour un signal).
 - L'ancien identifiant ne doit plus être un nœud de la définition.
 - Les correspondances s'enchaînent : `a` vers `b`, puis `b` vers `c`.
-- Sans correspondance, l'instance lève `NoeudInconnuException` au prochain appel, et `VerifierInstancesAsync` la signale au démarrage (section 2.7).
+- Sans correspondance, l'instance lève `NoeudInconnuException` au prochain appel. `ISuiviSentier.VerifierInstancesAsync` la signale avant, et `MigrerInstancesAsync` applique les correspondances en base (section 9).
 
 Ne changez ni la clé d'une définition ni le nom d'une variable tant que des instances en cours les portent.
 
-## 9. Tester
+## 9. Suivre et exploiter
+
+`ISuiviSentier` regroupe les outils de suivi et de support : vérification, migration, repositionnement, historique et diagrammes. Elle est séparée de `IMoteurSentier` et enregistrée par scope comme lui. Le moteur n'appelle jamais ces opérations : l'application les exécute quand elle le décide.
+
+### 9.1 Vérifier les instances
+
+```csharp
+var orphelines = await suivi.VerifierInstancesAsync(ct);
+```
+
+Une instance en cours est orpheline, avec la raison dans `Raison`, si :
+
+- sa définition n'existe plus ;
+- son nœud courant n'existe plus et n'a pas de correspondance ;
+- le nœud où elle se résout n'est pas de la même nature d'attente (elle attend une tâche, le nœud attend un signal).
+
+L'appel ne modifie rien et ne lit pas les variables des instances saines : il regarde les points d'arrêt distincts, puis ne charge que les orphelines.
+
+### 9.2 Migrer les instances
+
+Une correspondance (section 8) replace une instance à sa prochaine sollicitation, et doit donc rester dans le code tant qu'une instance est arrêtée sur l'ancien nœud. `MigrerInstancesAsync` applique les correspondances en base tout de suite :
+
+```csharp
+using var portee = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled);
+var resultat = await suivi.MigrerInstancesAsync(ct);
+portee.Complete();
+
+foreach (var m in resultat.Migrations)
+    journal.LogInformation("{Definition} : {Nombre} instance(s) de {Ancien} vers {Nouveau}", m.CleDefinition, m.NombreInstances, m.AncienNoeud, m.NouveauNoeud);
+```
+
+- Seul le nœud courant change ; la tâche, l'échéance, le groupe et les variables restent tels quels.
+- Les orphelines ne sont pas touchées ; elles sont retournées dans `Orphelines`.
+- Relancer la migration ne fait rien de plus.
+- Quand `Orphelines` est vide après la migration, les correspondances peuvent être retirées du code à la livraison suivante.
+- La migration n'écrit rien dans l'historique.
+
+### 9.3 Repositionner une instance
+
+Opération de support, pour une instance coincée : elle la replace sur un nœud de sa définition et l'exécute à partir de là, jusqu'au prochain point d'attente ou à la fin.
+
+```csharp
+using var portee = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled);
+var etat = await suivi.RepositionnerAsync("REMB-42", "approbation", "support", cancellationToken: ct);
+portee.Complete();
+```
+
+- L'instance visée est l'instance active de l'arbre : la tête, ou le sous-processus en cours. Le nœud est cherché dans la définition de cette instance ; inconnu, l'appel lève `NoeudInconnuException`.
+- Le nœud visé est exécuté comme à une arrivée normale : une commande s'exécute, un nœud interactif crée une nouvelle tâche, une fin termine l'instance (et le parent reprend, pour un sous-processus).
+- La tâche ouverte est annulée dans le bassin, sans sa commande `Apres`. L'échéance et l'abonnement au groupe en cours sont abandonnés.
+- `donnees` corrige des variables avant la reprise, par exemple celle qui a mené l'instance au mauvais endroit.
+- L'opération fonctionne pour une instance orpheline (section 9.1) : c'est le moyen de la sortir d'un nœud retiré sans correspondance.
+- `SentierException` si aucune instance n'est en cours pour cette clé (inconnue, terminée ou annulée).
+- Dans l'historique, la sortie du nœud quitté porte la transition `repositionnement` et l'acteur de l'appel.
+
+Aucun contrôle n'empêche de sauter des étapes : réservez cette opération au support.
+
+### 9.4 Lire l'historique
+
+```csharp
+foreach (var e in await suivi.LireHistoriqueAsync("REMB-42", ct))
+    Console.WriteLine($"{e.Date:g} {e.CleDefinition}/{e.Noeud} {e.Evenement} {e.Transition} ({e.Acteur})");
+```
+
+La liste couvre tout l'arbre de la clé de corrélation, sous-processus compris, dans l'ordre des événements. `Evenement` vaut `ENTREE`, `SORTIE` ou `ANNULATION` ; `Transition` porte la branche, le signal ou la transition empruntée à la sortie, `echeance` pour une escalade et `repositionnement` pour un repositionnement. La liste est vide si `HistoriqueActif` était à `false` ou si la clé est inconnue.
+
+### 9.5 Diagrammes Mermaid
+
+```csharp
+foreach (var cle in suivi.ClesDefinitions)
+    File.WriteAllText($"{cle}.mmd", suivi.DiagrammeDefinition(cle));
+
+string? diagramme = await suivi.DiagrammeInstanceAsync("REMB-42", ct);   // null si la clé est inconnue
+```
+
+`DiagrammeDefinition` retourne un `flowchart` Mermaid de la définition :
+
+| Nœud | Forme | Détail affiché |
+|---|---|---|
+| Systémique | Rectangle | La commande |
+| Décision | Losange | La requête |
+| Interactif | Parallélogramme | Le code de tâche |
+| Attente de signal | Stade | « signal » ou « signal de groupe » |
+| Attente de temps | Hexagone | La durée ou la variable de date |
+| Sous-processus | Rectangle à doubles bords | La définition appelée |
+| Fin | Double cercle | Le nom de la fin, s'il diffère de l'identifiant |
+
+Les flèches portent la valeur d'une branche, le signal ou la transition ; une escalade est en pointillé.
+
+`DiagrammeInstanceAsync` dessine l'arbre d'une clé de corrélation : un bloc pour l'instance de tête, puis un par sous-processus en cours. Le nœud courant de chaque instance est en évidence. Si l'historique est actif, les nœuds déjà traversés sont colorés ; sinon seul le nœud courant l'est. Pour une instance terminée ou annulée, seule la tête est dessinée.
+
+## 10. Tester
 
 ### Une commande ou une requête seule
 
@@ -609,7 +747,7 @@ Assert.Equal("approbation", etat.NoeudCourant);
 
 `tests/Sentier.Tests/Banc.cs` et `tests/Sentier.Tests/Doublures/` montrent un banc complet : bassin en mémoire, écouteur, résolveur et horloge réglable (un `TimeProvider`) pour faire passer les échéances.
 
-## 10. Exceptions
+## 11. Exceptions
 
 Toutes dérivent de `SentierException`.
 

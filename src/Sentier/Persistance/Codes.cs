@@ -13,7 +13,8 @@ internal static class Codes
     {
         "EN_COURS" => StatutInstance.EnCours,
         "TERMINEE" => StatutInstance.Terminee,
-        _ => StatutInstance.Annulee,
+        "ANNULEE" => StatutInstance.Annulee,
+        _ => throw new SentierException($"Le statut d'instance « {code} » lu en base est inconnu."),
     };
 
     public static string? De(TypeAttente? attente) => attente switch
@@ -31,6 +32,7 @@ internal static class Codes
         "SIGNAL" => TypeAttente.Signal,
         "TEMPS" => TypeAttente.Temps,
         "SOUS_PROC" => TypeAttente.SousProcessus,
-        _ => null,
+        null => null,
+        _ => throw new SentierException($"Le type d'attente « {code} » lu en base est inconnu."),
     };
 }

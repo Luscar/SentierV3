@@ -33,7 +33,12 @@ Principe directeur : à chaque sollicitation (démarrage, fin de tâche, signal,
 - **B-DEF-4** Décision : les définitions vivent uniquement en code ; elles ne sont pas enregistrées en base. Une instance n'est **pas** liée à une version : elle ne conserve que la clé de sa définition, son nœud courant et ses données. Quand le code change, toutes les instances en cours suivent la nouvelle définition à leur prochaine sollicitation (comportement attendu par les utilisateurs, comme avec RHPAM aujourd'hui).
 - **B-DEF-5** Conséquence : l'identifiant d'un nœud est un contrat. Le renommer ou le retirer touche les instances qui y sont arrêtées.
 - **B-DEF-6** Migration des instances en cours : quand un nœud est retiré ou renommé, la définition déclare une correspondance « ancien nœud → nouveau nœud ». Une instance arrêtée sur l'ancien nœud est replacée sur le nouveau à sa prochaine sollicitation.
-- **B-DEF-7** **[Proposition]** Au démarrage de l'application, une vérification signale les instances arrêtées sur un nœud inconnu et sans correspondance.
+- **B-DEF-7** Décision : une interface de suivi (`ISuiviSentier`), séparée des points d'entrée du moteur, regroupe les outils de suivi et de support. Le moteur ne l'appelle jamais ; le client l'exécute quand une définition change. Elle offre :
+  - la vérification des instances en cours que le code livré ne sait plus faire avancer (définition ou nœud retiré sans correspondance, nœud devenu d'une autre nature d'attente) ;
+  - la migration : les correspondances (B-DEF-6) sont appliquées en base aux instances en cours, ce qui permet de les retirer ensuite du code ;
+  - le repositionnement, opération de support : l'instance active est replacée sur un nœud de sa définition et exécutée à partir de là ; la tâche ouverte est annulée dans le bassin ;
+  - la lecture de l'historique d'un arbre d'instances ;
+  - le diagramme Mermaid d'une définition, et celui d'un arbre d'instances avec le nœud courant et, si l'historique est actif, les nœuds traversés.
 
 Esquisse d'API, à titre indicatif seulement :
 
@@ -87,7 +92,8 @@ Précisions :
 - **B-N-2** Transitions nommées : un nœud d'attente (interactif ou signal) peut avoir plusieurs transitions sortantes nommées. L'appelant choisit la transition par son nom en complétant la tâche ou en envoyant le signal ; il ne désigne jamais un nœud. Remplace le `codeProchaineTache` de `AvancerATacheSuivanteAsync`.
 - **B-N-3** Sous-processus : l'enfant s'exécute dans la même transaction que le parent tant qu'il n'atteint pas de point d'attente.
 - **B-N-4** **[Proposition]** Passage de données entre parent et enfant : entrées à l'appel, sorties au retour.
-- **B-N-5** **[Proposition]** Échéance sur un nœud interactif ou une attente de signal (délai dépassé → transition d'escalade), pour éviter les instances bloquées indéfiniment.
+- **B-N-5** Décision : échéance sur un nœud interactif ou une attente de signal, pour éviter les instances bloquées indéfiniment. Le nœud déclare un délai (durée, ou date portée par une variable) et un nœud d'escalade. Le délai dépassé, le déclenchement de l'échéance (B-API-4) envoie l'instance au nœud d'escalade ; pour un nœud interactif, la tâche ouverte est annulée dans le bassin et l'action **post** n'est pas exécutée. Un nœud quitté à temps n'a plus d'échéance.
+- **B-N-10** Décision : abonnement à un groupe de corrélation. Une attente de signal peut déclarer un groupe (valeur fixe, ou valeur d'une variable). L'instance s'y abonne en arrivant sur le nœud et s'en désabonne en le quittant, quelle que soit la sortie. Un signal envoyé au groupe (B-API-3) atteint toutes les instances abonnées. Exemple : les instances arrêtées sur « blocage de cotisation » s'abonnent au groupe du blocage, et le déblocage dans le domaine leur envoie un seul signal. Une instance peut s'abonner à des groupes différents à des nœuds différents.
 - **B-N-6** **[Proposition]** Garde contre les boucles sans fin : nombre maximal d'étapes par appel, configurable.
 
 ## 5. Abstractions côté client
@@ -139,12 +145,13 @@ Le moteur obtient la `IDbConnection` du client (B-TX-1) ; ses opérations sont e
 - **B-API-2** Compléter une tâche interactive, avec le nom de la transition choisie et des données.
 - **B-API-3** Envoyer un signal, de deux façons :
   - **ciblé** : à l'instance désignée par une clé de corrélation ;
-  - **diffusé** : à toutes les instances en attente de ce signal, avec un filtre facultatif par définition.
+  - **diffusé** : à toutes les instances en attente de ce signal, avec un filtre facultatif par définition ;
+  - **de groupe** : aux instances abonnées à un groupe de corrélation (B-N-10), avec le même filtre facultatif.
 - **B-API-7** Un signal peut porter le nom d'une transition et des données qui initialisent ou modifient des variables de l'instance.
 - **B-API-9** Chaque opération qui fait avancer une instance (démarrage, complétion, signal, échéance) retourne l'état atteint : nœud courant, type d'attente, et pour un nœud interactif le code et l'identifiant de la tâche créée. L'appelant n'a jamais à interroger en boucle.
 - **B-API-10** L'état d'une instance (B-API-6) inclut les signaux qu'elle attend.
 - **B-API-8** Signal conditionnel : si rien n'attend ce signal, l'appel ne lève pas d'erreur et le résultat l'indique.
-- **B-API-4** Échéances : le moteur expose la liste des échéances dues à un instant donné, et l'opération qui déclenche une échéance. Un composant externe au package appelle ces deux opérations.
+- **B-API-4** Échéances : le moteur expose la liste des échéances dues à un instant donné (attentes de temps et escalades, B-N-5), et l'opération qui déclenche une échéance. Un composant externe au package appelle ces deux opérations.
 - **B-API-5** **[Proposition]** Annuler une instance : annule les tâches ouvertes dans le bassin, les échéances et les sous-processus enfants.
 - **B-API-6** Consulter l'état d'une instance par clé de corrélation (en cours ou non, nœud courant, données). Le moteur est la source de vérité sur la vie d'une instance.
 
@@ -185,6 +192,7 @@ Table **INSTANCE** — une ligne par instance (processus de tête ou sous-proces
 | TYPE_ATTENTE | Texte court, nul | Tâche, signal, temps, sous-processus |
 | REF_TACHE | Nombre, nul | Identifiant de la tâche dans le bassin, pour un nœud interactif |
 | DATE_ECHEANCE | Date-heure, nul | Échéance d'une attente de temps ou d'une escalade |
+| GROUPE_SIGNAL | Texte, nul | Groupe de corrélation auquel l'instance est abonnée pendant son attente de signal (B-N-10) |
 | DONNEES | Texte long (CLOB) | Variables de l'instance, en JSON |
 | NO_VERSION | Nombre | Contrôle de concurrence optimiste |
 | ACTEUR_DEMARRAGE | Texte | Acteur qui a démarré l'instance |
@@ -199,12 +207,12 @@ Table **HISTORIQUE** — facultative (B-ET-5), une ligne par passage de nœud :
 | ID_HISTORIQUE | Nombre (`long`) | Identifiant, alimenté par séquence |
 | ID_INSTANCE | Nombre | Instance concernée |
 | NOEUD | Texte | Nœud traversé |
-| EVENEMENT | Texte court | Entrée, sortie |
+| EVENEMENT | Texte court | Entrée, sortie, annulation |
 | TRANSITION | Texte, nul | Transition empruntée à la sortie |
 | ACTEUR | Texte, nul | Acteur de l'appel |
 | DATE_EVENEMENT | Date-heure | |
 
-Il n'y a pas de table pour les signaux attendus ni pour les échéances : avec un seul nœud actif par instance, le nœud courant et la définition en code suffisent à les retrouver.
+Il n'y a pas de table pour les signaux attendus, les abonnements aux groupes ni les échéances : avec un seul nœud actif par instance, le nœud courant et la définition en code suffisent à les retrouver.
 
 ## 8. Exigences non fonctionnelles
 
@@ -312,4 +320,6 @@ Décision : le client génère une clé de corrélation au démarrage d'un proce
 
 Aucune pour l'instant. Restent à faire côté client : la révision des noms de tables, de colonnes et de séquences (section 7.1), et le tri des éléments encore marqués **[Proposition]**.
 
-Hypothèse retenue : un signal diffusé fait avancer plusieurs instances dans la même transaction (cas rare, jugé acceptable).
+Hypothèse retenue : un signal diffusé ou de groupe fait avancer plusieurs instances dans la même transaction (jugé acceptable) ; l'échec d'une seule annule l'envoi pour toutes.
+
+Limite connue du signal de groupe : le moteur ne mémorise pas les signaux. Une instance qui arrive sur l'attente pendant que le signal est envoyé peut le manquer. Le domaine doit sérialiser les deux (verrou sur la ligne du blocage, lue par la requête qui précède l'attente et modifiée par le déblocage) ; l'escalade (B-N-5) sert de filet.

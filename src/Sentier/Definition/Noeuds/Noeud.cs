@@ -13,6 +13,9 @@ internal abstract class Noeud(string id)
 
     public virtual TypeAttente? Attente => null;
 
+    /// <summary>Échéance d'escalade du nœud, s'il en a une.</summary>
+    public virtual Escalade? EscaladeDuNoeud => null;
+
     /// <summary>Toutes les sorties possibles, pour la validation.</summary>
     public virtual IEnumerable<string> Cibles => Suivant is null ? [] : [Suivant];
 }

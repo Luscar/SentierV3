@@ -49,7 +49,18 @@ public sealed class ModuleSentier(Action<OptionsSentier> configurer, params Asse
                 c.Resolve<IEnumerable<IEcouteurFinProcessus>>(),
                 c.Resolve<OptionsSentier>(),
                 c.ResolveOptional<TimeProvider>()))
+            .AsSelf()
             .As<IMoteurSentier>()
+            .InstancePerLifetimeScope();
+
+        // Suivi et exploitation, à part du pilotage.
+        builder.Register(c => new SuiviSentier(
+                c.Resolve<RegistreDefinitions>(),
+                c.Resolve<IAccesBDSentier>(),
+                c.Resolve<OptionsSentier>(),
+                c.Resolve<MoteurSentier>(),
+                c.ResolveOptional<TimeProvider>()))
+            .As<ISuiviSentier>()
             .InstancePerLifetimeScope();
     }
 
