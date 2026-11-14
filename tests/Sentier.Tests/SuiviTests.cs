@@ -68,7 +68,8 @@ public class SuiviTests
         Assert.Equal(["DeclOrign", "Identif", "Compta"], suivi.ClesDefinitions);
 
         var diagramme = suivi.DiagrammeDefinition("DeclOrign");
-        Assert.StartsWith("flowchart TD", diagramme);
+        Assert.StartsWith("flowchart LR", diagramme);
+        Assert.StartsWith("flowchart TD", suivi.DiagrammeDefinition("DeclOrign", OrientationDiagramme.Verticale));
         Assert.Contains("n0[\"valider<br/>ValiderDeclaration\"]", diagramme);
         Assert.Contains("n3{\"a-verifier<br/>DoitEtreVerifiee\"}", diagramme);
         Assert.Contains("n4[/\"verification<br/>tâche VERIF\"/]", diagramme);
@@ -94,7 +95,8 @@ public class SuiviTests
         // Arrêtée dans un sous-processus : la tête puis l'enfant, chacun avec son nœud courant.
         await banc.Moteur.DemarrerAsync(banc.Demande("x", 10m));
         var diagramme = await suivi.DiagrammeInstanceAsync("x");
-        Assert.Contains("subgraph i0[\"DeclOrign — instance 1 (en cours)\"]", diagramme);
+        Assert.StartsWith("flowchart LR", diagramme);
+        Assert.Contains("subgraph i0[\"DeclOrign — instance 1 (en cours)\"]\n        direction LR", diagramme);
         Assert.Contains("subgraph i1[\"Compta — instance 3 (en cours)\"]", diagramme);
         Assert.Contains("i0n0[\"valider<br/>ValiderDeclaration\"]:::visite", diagramme);
         Assert.Contains("i0n5[[\"comptabilisation<br/>Compta\"]]:::courant", diagramme);
@@ -109,6 +111,37 @@ public class SuiviTests
         Assert.Contains("(terminée)", diagramme);
         Assert.Contains("i0n9(((\"fin-doublon<br/>doublon\"))):::courant", diagramme);
         Assert.DoesNotContain("subgraph i1", diagramme);
+    }
+
+    [Fact]
+    public async Task Pages_html()
+    {
+        using var banc = new Banc();
+        banc.Options.UrlMermaid = "https://intranet.exemple/mermaid.mjs";
+        var suivi = banc.CreerSuivi([new MoteurTests.Renommee(true), .. SousProcessus]);
+
+        var page = suivi.PageDefinition("DeclOrign");
+        Assert.StartsWith("<!doctype html>", page);
+        Assert.Contains("<title>Définition DeclOrign</title>", page);
+        Assert.Contains("import mermaid from \"https://intranet.exemple/mermaid.mjs\"", page);
+        // Le diagramme est encodé dans la page : le navigateur le rend à Mermaid tel quel.
+        Assert.Contains("<pre class=\"mermaid\">\nflowchart LR\n", page);
+        Assert.Contains("n0[/&quot;controle&lt;br/&gt;tâche VERIF&quot;/]", page);
+        Assert.Contains("<td><code>controle</code></td><td>Interactif</td><td>Tâche VERIF</td><td><code>cotisee</code></td>", page);
+        Assert.Contains("<td><code>verification</code></td><td><code>controle</code></td>", page); // correspondance
+
+        suivi = banc.CreerSuivi();
+        Assert.Null(await suivi.PageInstanceAsync("absente"));
+        await banc.Moteur.DemarrerAsync(banc.Demande("x<1>", 10m)); // arrêtée dans le sous-processus
+        page = (await suivi.PageInstanceAsync("x<1>"))!;
+        Assert.Contains("<title>Instance x&lt;1&gt;</title>", page);
+        Assert.DoesNotContain("x<1>", page);
+        Assert.Contains("<h2>Variables de l'instance 3</h2>", page);
+        Assert.Contains("<td><code>langue</code></td><td><code>&quot;fr&quot;</code></td>", page);
+        Assert.Contains("<h2>Nœuds de Compta</h2>", page);
+        Assert.Contains("<tr class=\"courant\"><td><code>comptabiliser</code></td>", page);
+        Assert.Contains("<td><code>a-verifier</code></td><td>SORTIE</td><td><code>False</code></td><td>alice</td>", page);
+        Assert.Contains(":::courant", page);
     }
 
     [Fact]

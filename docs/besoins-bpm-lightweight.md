@@ -38,7 +38,8 @@ Principe directeur : à chaque sollicitation (démarrage, fin de tâche, signal,
   - la migration : les correspondances (B-DEF-6) sont appliquées en base aux instances en cours, ce qui permet de les retirer ensuite du code ;
   - le repositionnement, opération de support : l'instance active est replacée sur un nœud de sa définition et exécutée à partir de là ; la tâche ouverte est annulée dans le bassin ;
   - la lecture de l'historique d'un arbre d'instances ;
-  - le diagramme Mermaid d'une définition, et celui d'un arbre d'instances avec le nœud courant et, si l'historique est actif, les nœuds traversés.
+  - une page HTML des détails d'une définition ou d'un arbre d'instances, diagramme Mermaid inclus ;
+  - le diagramme Mermaid (horizontal par défaut) d'une définition, et celui d'un arbre d'instances avec le nœud courant et, si l'historique est actif, les nœuds traversés.
 
 Esquisse d'API, à titre indicatif seulement :
 

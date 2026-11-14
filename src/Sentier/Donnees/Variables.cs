@@ -40,6 +40,9 @@ public sealed class Variables
 
     internal Variables Copier() => new(new Dictionary<string, JsonElement>(_valeurs, StringComparer.Ordinal));
 
+    /// <summary>Chaque variable et sa valeur en JSON, pour l'affichage.</summary>
+    internal IEnumerable<(string Nom, string Json)> EnTexte() => _valeurs.OrderBy(v => v.Key, StringComparer.Ordinal).Select(v => (v.Key, v.Value.GetRawText()));
+
     internal string VersJson() => JsonSerializer.Serialize(_valeurs);
 
     internal static Variables DeJson(string? json)

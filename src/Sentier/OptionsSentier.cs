@@ -10,4 +10,9 @@ public sealed class OptionsSentier
     public bool HistoriqueActif { get; set; }
     /// <summary>Garde contre les boucles sans fin : nombre maximal de nœuds exécutés par appel.</summary>
     public int NombreMaxEtapes { get; set; } = 1000;
+    /// <summary>
+    /// Adresse du module Mermaid (ESM) chargé par les pages HTML du suivi. Sans accès à Internet depuis le
+    /// navigateur, hébergez le fichier et indiquez ici son adresse.
+    /// </summary>
+    public string UrlMermaid { get; set; } = "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";
 }

@@ -11,21 +11,26 @@ internal static class DiagrammeMermaid
             classDef courant fill:#fde293,stroke:#e37400,stroke-width:3px,color:#000
         """;
 
-    public static string Definition(DefinitionProcessus definition)
+    private static string Entete(OrientationDiagramme orientation) => orientation == OrientationDiagramme.Horizontale ? "LR" : "TD";
+
+    public static string Definition(DefinitionProcessus definition, OrientationDiagramme orientation)
     {
-        var sortie = new StringBuilder("flowchart TD\n");
+        var sortie = new StringBuilder($"flowchart {Entete(orientation)}\n");
         Ecrire(sortie, definition, "n", "    ", null, new HashSet<string>());
         return sortie.ToString();
     }
 
     /// <param name="arbre">De la tête à la feuille : chaque instance, sa définition et les nœuds qu'elle a traversés.</param>
-    public static string Instance(IReadOnlyList<(string Titre, DefinitionProcessus Definition, string? Courant, IReadOnlySet<string> Visites)> arbre)
+    public static string Instance(
+        IReadOnlyList<(string Titre, DefinitionProcessus Definition, string? Courant, IReadOnlySet<string> Visites)> arbre,
+        OrientationDiagramme orientation)
     {
-        var sortie = new StringBuilder("flowchart TD\n");
+        var sortie = new StringBuilder($"flowchart {Entete(orientation)}\n");
         for (var i = 0; i < arbre.Count; i++)
         {
             var (titre, definition, courant, visites) = arbre[i];
             sortie.Append($"    subgraph i{i}[\"{Texte(titre)}\"]\n");
+            sortie.Append($"        direction {Entete(orientation)}\n");
             Ecrire(sortie, definition, $"i{i}n", "        ", courant, visites);
             sortie.Append("    end\n");
         }
@@ -67,7 +72,8 @@ internal static class DiagrammeMermaid
         _ => $"[\"{Texte(noeud.Id)}\"]",
     };
 
-    private static IEnumerable<(string? Libelle, string Cible, bool Pointille)> Sorties(Noeud noeud)
+    /// <summary>Sorties d'un nœud : libellé de la flèche, nœud visé, et pointillé pour une escalade.</summary>
+    internal static IEnumerable<(string? Libelle, string Cible, bool Pointille)> Sorties(Noeud noeud)
     {
         switch (noeud)
         {
@@ -107,7 +113,7 @@ internal static class DiagrammeMermaid
     private static string Libelle(Noeud noeud, string? detail)
         => detail is null ? Texte(noeud.Id) : $"{Texte(noeud.Id)}<br/>{Texte(detail)}";
 
-    private static string Duree(TimeSpan duree)
+    internal static string Duree(TimeSpan duree)
         => duree.Ticks % TimeSpan.TicksPerDay == 0 ? $"{duree.Days} j"
             : duree.Ticks % TimeSpan.TicksPerHour == 0 ? $"{(long)duree.TotalHours} h"
             : duree.ToString("c", CultureInfo.InvariantCulture);

@@ -313,7 +313,7 @@ Cet appel fait deux choses :
 - il résout le suivi, donc construit le registre : une définition invalide lève `DefinitionInvalideException` au démarrage plutôt qu'au premier usage ;
 - il liste les instances en cours que le code livré ne sait plus faire avancer : définition ou nœud retiré sans correspondance, ou nœud devenu d'une autre nature d'attente.
 
-Le moteur n'exécute jamais cette vérification seul : c'est à l'application de l'appeler, au démarrage ou à la livraison d'une définition modifiée. `ISuiviSentier` offre aussi la migration des instances, le repositionnement, la lecture de l'historique et les diagrammes Mermaid (guide, section 9).
+Le moteur n'exécute jamais cette vérification seul : c'est à l'application de l'appeler, au démarrage ou à la livraison d'une définition modifiée. `ISuiviSentier` offre aussi la migration des instances, le repositionnement, la lecture de l'historique, les diagrammes Mermaid et les pages HTML (guide, section 9).
 
 ## 10. Liste de contrôle
 
