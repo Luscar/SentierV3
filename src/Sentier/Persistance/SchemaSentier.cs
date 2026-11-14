@@ -29,7 +29,7 @@ public static class SchemaSentier
                 TYP_ATTEN               {court},
                 REF_TACHE               {nombre},
                 DAT_ECHNC               {date},
-                GROUPE_SIGNAL           {texte},
+                CLE_GROUP_CORREL_SIGNL  {texte},
                 VAR_JSON                {clob} NOT NULL,
                 NO_VERSI                {entier} NOT NULL,
                 LOGON_CREA              {texte},
@@ -46,7 +46,7 @@ public static class SchemaSentier
             $"CREATE INDEX IX_02_{noms.TableInstance} ON {noms.TableInstance} (CLE_CORREL)",
             $"CREATE INDEX IX_03_{noms.TableInstance} ON {noms.TableInstance} (REF_TACHE)",
             $"CREATE INDEX IX_04_{noms.TableInstance} ON {noms.TableInstance} (TE_SEQ_INSTC_PROCS, TYP_ATTEN, DAT_ECHNC)",
-            $"CREATE INDEX IX_05_{noms.TableInstance} ON {noms.TableInstance} (GROUPE_SIGNAL)",
+            $"CREATE INDEX IX_05_{noms.TableInstance} ON {noms.TableInstance} (CLE_GROUP_CORREL_SIGNL)",
             $"""
             CREATE TABLE {noms.TableHistorique} (
                 NO_SEQ_HIST_INSTC_PROCS {nombre} NOT NULL,
