@@ -64,6 +64,8 @@ Avec ces options, les objets créés sont :
 | Table de l'historique | `AT_HISTORIQUE_TAXE` |
 | Séquences | `AT_S_INSTANCE_TAXE`, `AT_S_HISTORIQUE_TAXE` |
 
+Les scripts créent aussi un index unique, `AT_INSTANCE_TAXE_U1`, qui garantit une seule instance de tête par clé de corrélation. Les sous-processus partagent la clé de leur tête et en sont exclus.
+
 Le préfixe et le suffixe doivent être les mêmes dans les scripts et dans l'enregistrement du moteur (section 2.5).
 
 ### 2.3 Fournir l'accès aux données

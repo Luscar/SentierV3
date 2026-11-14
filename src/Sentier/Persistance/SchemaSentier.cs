@@ -39,6 +39,10 @@ public static class SchemaSentier
                 CONSTRAINT {noms.TableInstance}_PK PRIMARY KEY (ID_INSTANCE)
             )
             """,
+            // Une seule instance de tête par clé de corrélation ; les sous-processus, qui partagent la clé, sont exclus.
+            oracle
+                ? $"CREATE UNIQUE INDEX {noms.TableInstance}_U1 ON {noms.TableInstance} (CASE WHEN ID_INSTANCE_PARENT IS NULL THEN CLE_CORRELATION END)"
+                : $"CREATE UNIQUE INDEX {noms.TableInstance}_U1 ON {noms.TableInstance} (CLE_CORRELATION) WHERE ID_INSTANCE_PARENT IS NULL",
             $"CREATE INDEX {noms.TableInstance}_I1 ON {noms.TableInstance} (CLE_CORRELATION)",
             $"CREATE INDEX {noms.TableInstance}_I2 ON {noms.TableInstance} (REF_TACHE)",
             $"CREATE INDEX {noms.TableInstance}_I3 ON {noms.TableInstance} (STATUT, TYPE_ATTENTE, DATE_ECHEANCE)",

@@ -186,10 +186,35 @@ public class MoteurTests
         var etat = await banc.Moteur.DemarrerAsync(banc.Demande());
 
         // Un autre appel a modifié l'instance entre la lecture et l'écriture.
-        var bd = new AccesBDEntrelace(banc.Bd, "UPDATE AT_INSTANCE_TAXE SET NO_VERSION = NO_VERSION + 1");
+        var bd = new AccesBDEntrelace(banc.Bd, "UPDATE", "UPDATE AT_INSTANCE_TAXE SET NO_VERSION = NO_VERSION + 1");
         var moteur = new MoteurSentier(new RegistreDefinitions([new DeclarationOriginale(), new Identification(), new Comptabilisation()]),
             bd, new ResolveurJournal(banc.Journal), banc.Bassin, [], banc.Options, banc.Horloge);
         await Assert.ThrowsAsync<ConflitConcurrenceException>(() => moteur.CompleterTacheAsync(etat.RefTache!.Value, "bob", "doublon"));
+    }
+
+    [Fact]
+    public async Task Deux_demarrages_simultanes_avec_la_meme_cle()
+    {
+        using var banc = new Banc();
+
+        // Un autre appel a démarré une instance avec la même clé entre la vérification et l'insertion.
+        var bd = new AccesBDEntrelace(banc.Bd, "INSERT INTO AT_INSTANCE_TAXE", """
+            INSERT INTO AT_INSTANCE_TAXE (ID_INSTANCE, ID_AFFAIRE, CLE_CORRELATION, CLE_DEFINITION, NOEUD_COURANT, STATUT,
+                                          DONNEES, NO_VERSION, DATE_DEMARRAGE, DATE_MODIFICATION)
+            VALUES (999, 42, 'cle-1', 'DeclOrign', 'verification', 'EN_COURS', '{}', 1, '2026-01-15', '2026-01-15')
+            """);
+        var moteur = new MoteurSentier(new RegistreDefinitions([new DeclarationOriginale(), new Identification(), new Comptabilisation()]),
+            bd, new ResolveurJournal(banc.Journal), banc.Bassin, [], banc.Options, banc.Horloge);
+        var erreur = await Assert.ThrowsAsync<CleCorrelationDejaUtiliseeException>(() => moteur.DemarrerAsync(banc.Demande()));
+        Assert.NotNull(erreur.InnerException); // le refus vient de l'index unique de la base
+
+        var tetes = await banc.Bd.QueryAsync<long>(
+            "SELECT ID_INSTANCE FROM AT_INSTANCE_TAXE WHERE CLE_CORRELATION = 'cle-1' AND ID_INSTANCE_PARENT IS NULL");
+        Assert.Equal([999L], tetes);
+
+        // Les sous-processus partagent la clé de leur tête sans heurter l'index.
+        var etat = await banc.Moteur.DemarrerAsync(banc.Demande("autre", 10m));
+        Assert.NotEqual(etat.IdInstance, etat.IdInstanceActive);
     }
 
     [Fact]
@@ -385,14 +410,14 @@ public class MoteurTests
         public object Resoudre(Type type) => Activator.CreateInstance(type, journal)!;
     }
 
-    /// <summary>Exécute un SQL concurrent juste avant la première mise à jour d'instance.</summary>
-    private sealed class AccesBDEntrelace(IAccesBDSentier bd, string sqlConcurrent) : IAccesBDSentier
+    /// <summary>Exécute un SQL concurrent juste avant la première commande qui commence par <paramref name="avant"/>.</summary>
+    private sealed class AccesBDEntrelace(IAccesBDSentier bd, string avant, string sqlConcurrent) : IAccesBDSentier
     {
         private bool _fait;
 
         public async Task<int> ExecuteNonQueryAsync(string requeteSQL, object? parametres = null, CancellationToken cancellationToken = default)
         {
-            if (!_fait && requeteSQL.TrimStart().StartsWith("UPDATE"))
+            if (!_fait && requeteSQL.TrimStart().StartsWith(avant))
             {
                 _fait = true;
                 await bd.ExecuteNonQueryAsync(sqlConcurrent, null, cancellationToken);
