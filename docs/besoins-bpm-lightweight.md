@@ -6,14 +6,15 @@
 
 Un moteur de processus minimaliste, livré en package NuGet, qui s'embarque dans l'application cliente (pas de serveur, pas de service d'arrière-plan imposé). Le moteur orchestre ; toute la logique d'affaires reste côté client, derrière des interfaces d'abstraction.
 
-Principe directeur : à chaque sollicitation (démarrage, fin de tâche, signal, échéance), le moteur exécute une suite d'étapes **dans une seule transaction fournie par le client**, jusqu'à atteindre un point d'attente ou la fin du processus.
+Principe directeur : à chaque sollicitation (démarrage, fin de tâche, signal, échéance), le moteur exécute une suite d'étapes **dans une seule transaction, celle du client**, jusqu'à atteindre un point d'attente ou la fin du processus.
 
 ## 2. Transaction
 
-- **B-TX-1** Le client injecte une `IDbTransaction` à chaque appel du moteur. C'est la seule dépendance d'infrastructure reçue.
-- **B-TX-2** Le moteur n'ouvre, ne valide et n'annule jamais la transaction. Le commit et le rollback appartiennent au client.
+- **B-TX-1** Le client fournit au moteur une `IDbConnection` déjà ouverte : c'est la seule poignée dont il dispose. Il n'y a pas d'objet transaction à passer ; la transaction est celle que le client a ouverte sur cette connexion (sa couche d'accès aux données, au-dessus de Dapper, passe `null` comme transaction aux commandes).
+- **B-TX-2** Le moteur n'ouvre et ne ferme jamais la connexion, et ne démarre, ne valide ni n'annule de transaction. Tout cela appartient au client.
+- **B-TX-8** Le moteur exécute toutes ses écritures sur cette connexion, de la même façon que la couche du client (commandes sans objet transaction). La garantie « tout ou rien » repose donc sur la transaction du client : s'il n'y en a pas d'ouverte, il n'y a pas de garantie.
 - **B-TX-3** Toutes les étapes exécutées lors d'un même appel (nœuds systémiques, décisions, création de tâches, changements d'état du moteur) partagent cette transaction : tout passe ou rien ne passe.
-- **B-TX-4** La transaction est transmise aux handlers de commandes et de requêtes du client pour qu'ils y participent.
+- **B-TX-4** Les handlers du client travaillent sur la même connexion, obtenue du scope courant ; le moteur n'a rien à leur transmettre.
 - **B-TX-5** **[Proposition]** En cas d'exception dans un handler, le moteur ne rattrape rien et ne fait aucune reprise : l'exception remonte et le client annule la transaction. L'instance reste donc dans son dernier état validé.
 - **B-TX-7** Toute l'API du moteur et tous les handlers sont asynchrones (`Task`, `CancellationToken`).
 - **B-TX-6** **[Proposition]** Documenter clairement que les effets hors base de données (courriel, appel HTTP) faits dans un handler ne sont pas transactionnels ; le patron recommandé côté client est une boîte d'envoi (outbox).
@@ -25,7 +26,8 @@ Principe directeur : à chaque sollicitation (démarrage, fin de tâche, signal,
 - **B-DEF-3** **[Proposition]** La définition est validée à la construction (`Build()`) : nœud de départ unique, nœuds inatteignables, transitions vers un nœud inexistant, décision sans branche par défaut, identifiants en double.
 - **B-DEF-4** Décision : les définitions vivent uniquement en code ; elles ne sont pas enregistrées en base. Une instance n'est **pas** liée à une version : elle ne conserve que la clé de sa définition, son nœud courant et ses données. Quand le code change, toutes les instances en cours suivent la nouvelle définition à leur prochaine sollicitation (comportement attendu par les utilisateurs, comme avec RHPAM aujourd'hui).
 - **B-DEF-5** Conséquence : l'identifiant d'un nœud est un contrat. Le renommer ou le retirer touche les instances qui y sont arrêtées.
-- **B-DEF-6** **[Proposition]** Une définition peut déclarer une redirection « ancien nœud → nouveau nœud » pour les instances arrêtées sur un nœud disparu. Au démarrage de l'application, une vérification signale les instances arrêtées sur un nœud inconnu et sans redirection.
+- **B-DEF-6** Migration des instances en cours : quand un nœud est retiré ou renommé, la définition déclare une correspondance « ancien nœud → nouveau nœud ». Une instance arrêtée sur l'ancien nœud est replacée sur le nouveau à sa prochaine sollicitation.
+- **B-DEF-7** **[Proposition]** Au démarrage de l'application, une vérification signale les instances arrêtées sur un nœud inconnu et sans correspondance.
 
 Esquisse d'API, à titre indicatif seulement :
 
@@ -77,7 +79,7 @@ Le moteur ne connaît que des interfaces ; le client fournit les implémentation
 - **B-ABS-3** **Commandes** : les nœuds systémiques et les actions pré/post lancent des commandes traitées par des handlers implémentés côté client.
 - **B-ABS-4** **Requêtes** : les nœuds décisionnels s'appuient sur des requêtes traitées côté client.
 - **B-ABS-8** Les handlers sont typés et asynchrones, sur des interfaces définies par le package (du genre `ICommandHandler<TCommande>` et `IQueryHandler<TRequete, TResultat>`). Le package ne dépend pas de MediatR, pour rester utilisable par d'autres applications ; un client qui le souhaite peut écrire un handler qui relaie vers MediatR.
-- **B-ABS-5** **[Proposition]** **Planification des échéances** : le moteur n'a pas de fil d'arrière-plan. Il déclare l'échéance au client (interface de planification) et le client rappelle le moteur à l'heure venue. Variante : le moteur expose « quelles échéances sont dues ? » et l'hôte interroge périodiquement.
+- **B-ABS-5** **Échéances** : le moteur n'a ni minuterie ni fil d'arrière-plan. Il enregistre la date d'échéance avec l'instance ; c'est un composant externe au package qui réveille le moteur par l'interface de service (B-API-4).
 - **B-ABS-6** **[Proposition]** **Signalement des autres événements du cycle de vie** (instance démarrée, nœud entré/sorti, instance suspendue), utile pour l'audit et le suivi sans alourdir le moteur.
 - **B-ABS-7** **Injection de dépendances** : l'application cliente utilise Autofac. Elle ouvre un scope et appelle le moteur à travers une couche de service enregistrée dans ses propres injections. L'enregistrement du package doit tenir en une ligne.
   - Le cœur du package ne dépend d'aucun conteneur.
@@ -86,7 +88,7 @@ Le moteur ne connaît que des interfaces ; le client fournit les implémentation
 
 ## 6. Points d'entrée du moteur
 
-Chaque appel reçoit la `IDbTransaction` du client.
+Le moteur obtient la `IDbConnection` du client (B-TX-1) ; ses opérations sont exposées par une interface de service.
 
 - **B-API-1** Démarrer une instance : définition, clé de corrélation fournie par le client, données initiales, acteur.
 - **B-API-2** Compléter une tâche interactive, avec le nom de la transition choisie et des données.
@@ -95,7 +97,7 @@ Chaque appel reçoit la `IDbTransaction` du client.
   - **diffusé** : à toutes les instances en attente de ce signal, avec un filtre facultatif par définition.
 - **B-API-7** Un signal peut porter le nom d'une transition et des données qui initialisent ou modifient des variables de l'instance.
 - **B-API-8** Signal conditionnel : si rien n'attend ce signal, l'appel ne lève pas d'erreur et le résultat l'indique.
-- **B-API-4** Signaler qu'une échéance est atteinte.
+- **B-API-4** Échéances : le moteur expose la liste des échéances dues à un instant donné, et l'opération qui déclenche une échéance. Un composant externe au package appelle ces deux opérations.
 - **B-API-5** **[Proposition]** Annuler une instance : annule les tâches ouvertes dans le bassin, les échéances et les sous-processus enfants.
 - **B-API-6** Consulter l'état d'une instance par clé de corrélation (en cours ou non, nœud courant, données). Le moteur est la source de vérité sur la vie d'une instance.
 
@@ -107,6 +109,49 @@ Chaque appel reçoit la `IDbTransaction` du client.
 - **B-ET-3** **[Proposition]** Accès concurrent : deux appels simultanés sur la même instance ne doivent pas la corrompre (verrou de ligne ou numéro de version optimiste).
 - **B-ET-4** **[Proposition]** Idempotence : compléter deux fois la même tâche ou recevoir deux fois la même échéance ne fait pas avancer l'instance deux fois.
 - **B-ET-5** **[Proposition]** Historique minimal des passages de nœuds (qui, quand, résultat), activable.
+
+### 7.1 Persistance
+
+- **B-PER-1** Le package conserve lui-même l'état des instances, dans ses propres tables, à travers la connexion du client.
+- **B-PER-2** Bases visées : Oracle en production, SQLite pour les tests. Le SQL du package doit fonctionner sur les deux.
+- **B-PER-3** Nom des tables : `{PRÉFIXE}_{nom}_{SUFFIXE}`, le préfixe et le suffixe étant fournis à l'enregistrement du package (exemple de la convention du client : `AT_DECLA_TAXE`).
+- **B-PER-4** Les noms de tables et de colonnes ci-dessous sont provisoires ; ils seront révisés par le client pour respecter les mnémoniques de son environnement.
+- **B-PER-5** **[Proposition]** Pour rester portable entre Oracle et SQLite : identifiants générés par le package (pas de séquence ni d'auto-incrément), contrôle de concurrence par numéro de version (pas de verrou de ligne), données d'instance en JSON dans une colonne texte.
+- **B-PER-6** **[Proposition]** Le package fournit les scripts de création des tables pour Oracle ; il n'exécute aucune migration de schéma lui-même.
+
+Table **INSTANCE** — une ligne par instance (processus de tête ou sous-processus) :
+
+| Colonne (provisoire) | Type logique | Rôle |
+|---|---|---|
+| ID_INSTANCE | Texte 36 | Identifiant généré par le package |
+| CLE_CORRELATION | Texte | Clé fournie par le client ; héritée par les sous-processus |
+| CLE_DEFINITION | Texte | Définition exécutée |
+| ID_INSTANCE_PARENT | Texte 36, nul | Instance appelante, pour un sous-processus |
+| NOEUD_COURANT | Texte | Identifiant du nœud où l'instance est arrêtée |
+| STATUT | Texte court | En cours, terminée, annulée |
+| TYPE_ATTENTE | Texte court, nul | Tâche, signal, temps, sous-processus |
+| REF_TACHE | Nombre, nul | Identifiant de la tâche dans le bassin, pour un nœud interactif |
+| DATE_ECHEANCE | Date-heure, nul | Échéance d'une attente de temps ou d'une escalade |
+| DONNEES | Texte long (CLOB) | Variables de l'instance, en JSON |
+| NO_VERSION | Nombre | Contrôle de concurrence optimiste |
+| ACTEUR_DEMARRAGE | Texte | Acteur qui a démarré l'instance |
+| DATE_DEMARRAGE | Date-heure | |
+| DATE_MODIFICATION | Date-heure | |
+| DATE_FIN | Date-heure, nul | |
+
+Table **HISTORIQUE** — facultative (B-ET-5), une ligne par passage de nœud :
+
+| Colonne (provisoire) | Type logique | Rôle |
+|---|---|---|
+| ID_HISTORIQUE | Texte 36 | Identifiant généré par le package |
+| ID_INSTANCE | Texte 36 | Instance concernée |
+| NOEUD | Texte | Nœud traversé |
+| EVENEMENT | Texte court | Entrée, sortie |
+| TRANSITION | Texte, nul | Transition empruntée à la sortie |
+| ACTEUR | Texte, nul | Acteur de l'appel |
+| DATE_EVENEMENT | Date-heure | |
+
+Il n'y a pas de table pour les signaux attendus ni pour les échéances : avec un seul nœud actif par instance, le nœud courant et la définition en code suffisent à les retrouver.
 
 ## 8. Exigences non fonctionnelles
 
@@ -144,7 +189,8 @@ Trois problèmes de fond :
 ### 9.2 Principe retenu
 
 - **B-COH-1** Le package NuGet ne contient **aucun** concept d'affaires : ni déclaration, ni période, ni formulaire, ni énumération du client. `IServiceProcessusAffaires` reste côté client, comme façade d'affaires.
-- **B-COH-2** Sous la façade, le client définit un port neutre unique, avec deux adaptateurs : un vers RHPAM, un vers le nouveau moteur. Les appelants actuels (une cinquantaine de références) ne changent pas.
+- **B-COH-2** Une implémentation de `IServiceProcessusAffaires` par moteur (RHPAM, nouveau moteur), plus une implémentation d'aiguillage qui délègue à la bonne selon le catalogue et la table de corrélation. Les appelants actuels (une cinquantaine de références) ne changent pas.
+- **B-COH-17** Signal diffusé : chaque implémentation le traite pour son propre moteur ; l'implémentation d'aiguillage peut l'envoyer aux deux si le besoin se présente.
 - **B-COH-3** Aiguillage par catalogue : le client possède un catalogue de catégories de processus. Une entrée associe une catégorie (énumération), plus un critère facultatif (par exemple le type de formulaire pour les déclarations), à un moteur et à une définition.
 - **B-COH-4** Une instance reste sur le moteur qui l'a démarrée jusqu'à sa fin. Aucune migration d'instance entre moteurs. L'aiguillage s'appuie sur la table de corrélation (section 9.4).
 - **B-COH-5** Les tâches du bassin portent le moteur d'origine, pour que la complétion d'une tâche soit acheminée au bon moteur.
@@ -159,7 +205,7 @@ Trois problèmes de fond :
 - **B-COH-12** Les signaux et les complétions de tâche transportent un contenu (le `T contenu` actuel), versé dans les données de l'instance.
 - **B-COH-13** L'acteur (le `logon` actuel) est transmis au moteur à chaque appel, rendu disponible aux handlers et transmis au bassin de tâches à la création d'une tâche. L'assignation automatique à l'acteur reste une décision du bassin, pas du moteur.
 - **B-COH-14** Les identifiants de tâche restent compatibles avec les `long` de l'interface actuelle.
-- **B-COH-15** Une seule opération de démarrage, transactionnelle. Le démarrage différé (« éventuellement ») reste côté client : c'est un message asynchrone qui appelle ce démarrage.
+- **B-COH-15** Une seule opération de démarrage, transactionnelle, avec une option « assigner la première tâche à l'acteur ». L'option est transmise au bassin de tâches, qui fait l'assignation. Les deux démarrages actuels peuvent ainsi devenir une seule méthode. Le démarrage différé (« éventuellement ») reste côté client : c'est un message asynchrone qui appelle ce démarrage.
 - **B-COH-16** Décision : `TypeSousProcessus` est retiré et remplacé par `TypeProcessus`. Un sous-processus est une définition comme une autre. Là où l'interface cible un sous-processus, le type sert de filtre : le signal n'est remis que si le nœud en attente appartient à une instance de ce type.
 
 ### 9.4 Table de corrélation (côté client)
@@ -181,7 +227,8 @@ Décision : le client génère une clé de corrélation au démarrage d'un proce
 - **B-COR-4** La façade résout (identifiant d'affaires, type de processus) en (moteur, clé de corrélation), puis appelle le moteur avec la clé.
 - **B-COR-5** Source de vérité : le moteur BPM, pas la table. Pour « le processus est-il en cours ? », la façade résout la clé dans la table puis interroge le moteur.
 - **B-COR-6** Fin de processus : un écouteur met la table à jour. Pour RHPAM, ce sont ses écouteurs d'événements de fin. Pour le nouveau moteur, c'est le signalement de fin de processus (B-ABS-2), dans la transaction qui termine l'instance.
-- **B-COR-7** Nouveau moteur : la ligne est écrite dans la même `IDbTransaction` que le démarrage.
+- **B-COR-7** Nouveau moteur : la ligne est écrite sur la même connexion, donc dans la même transaction, que le démarrage.
+- **B-COR-11** Unicité : une seule instance en cours par (identifiant d'affaires, type de processus). Comme le statut de la table n'est qu'indicatif, la façade confirme auprès du moteur avant de refuser un démarrage.
 - **B-COR-8** **[Proposition]** Conserver le moteur sur la ligne, même s'il se déduit du catalogue. Si une entrée du catalogue change de moteur, les instances déjà en cours doivent encore être acheminées vers l'ancien.
 - **B-COR-9** **[Proposition]** RHPAM : l'appel distant et l'écriture dans la table ne sont pas atomiques. Prévoir l'ordre des opérations et une réconciliation (ligne sans instance, instance sans ligne).
 - **B-COR-10** Reprise de l'existant : les instances RHPAM déjà en cours doivent recevoir une ligne dans la table (et une clé de corrélation) pour que l'aiguillage soit uniforme. Travail à planifier côté client.
@@ -198,11 +245,8 @@ Décision : le client génère une clé de corrélation au démarrage d'un proce
 
 ## 11. Questions ouvertes
 
-1. **Persistance de l'état du moteur.** Où le moteur conserve-t-il ses instances (nœud courant, données, clé de corrélation) ? Soit le package écrit lui-même ses tables à travers la transaction reçue (il faut alors savoir quelle base viser : SQL Server, Oracle, autre), soit le client implémente une interface de stockage.
-2. **Type de la transaction.** Les handlers étant asynchrones, le package peut-il recevoir une `DbTransaction` (qui est aussi une `IDbTransaction`) ? Elle seule donne accès aux opérations asynchrones d'ADO.NET.
-3. **Réveil des échéances.** Qui rappelle le moteur quand une attente de temps arrive à terme : la messagerie asynchrone déjà en place, un planificateur existant, autre ?
-4. **Signal diffusé.** Il fait avancer plusieurs instances dans la même transaction : acceptable, ou faut-il une transaction par instance ? Et doit-il aussi atteindre les instances hébergées par RHPAM ?
-5. **Nœud retiré d'une définition.** Pour les instances arrêtées sur ce nœud : redirection déclarée dans la définition (B-DEF-6), ou interdiction de retirer un nœud occupé ?
-6. **Assignation automatique.** La distinction entre les deux démarrages actuels (assignation au `logon` appelant) est-elle encore utile ?
-7. **Unicité.** Peut-il y avoir deux instances en cours pour un même identifiant d'affaires et un même type de processus ?
-8. **Catalogue et implémentations.** À compléter après examen des photos (catalogue de catégories, classes du client).
+1. **Délimitation de la transaction.** Qui ouvre et valide la transaction sur la connexion aujourd'hui (la couche d'accès aux données à l'ouverture du scope, un `TransactionScope`, autre) ? Le « tout ou rien » du moteur en dépend entièrement (B-TX-8).
+2. **Accès asynchrone.** `IDbConnection` n'offre que des opérations synchrones. Le package peut-il utiliser les opérations asynchrones quand la connexion reçue est une `DbConnection` (c'est le cas d'Oracle et de SQLite), ou doit-il passer par la couche d'accès du client ?
+3. **Noms de colonnes.** Une fois révisés, sont-ils fixés dans le package, ou doivent-ils rester configurables pour d'autres applications ?
+4. **Signal diffusé et transaction.** Il fait avancer plusieurs instances dans la même transaction : acceptable ? (Supposé oui pour l'instant.)
+5. **Catalogue et implémentations.** À compléter après examen des photos (catalogue de catégories, classes du client).
