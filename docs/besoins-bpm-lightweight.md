@@ -10,10 +10,10 @@ Principe directeur : à chaque sollicitation (démarrage, fin de tâche, signal,
 
 ## 2. Transaction
 
-- **B-TX-1** Le client fournit au moteur une `DbConnection` déjà ouverte : c'est la seule poignée d'infrastructure reçue. Il n'y a pas d'objet transaction à passer.
+- **B-TX-1** Le client fournit au moteur une `IDbConnection` déjà ouverte : c'est la seule poignée d'infrastructure reçue. Il n'y a pas d'objet transaction à passer.
 - **B-TX-2** La transaction est ambiante : l'API du client ouvre un `TransactionScope`, et la connexion y participe. Le moteur n'ouvre et ne ferme jamais la connexion, ne crée pas de `TransactionScope` et ne valide ni n'annule rien.
 - **B-TX-8** Le moteur exécute ses commandes sur cette connexion sans objet transaction, comme la couche d'accès du client (au-dessus de Dapper). La garantie « tout ou rien » repose sur le `TransactionScope` du client.
-- **B-TX-11** Décision : le moteur ne manipule pas la `DbConnection` directement. Il passe par un port, `IAccesBDSentier`, dont les quatre méthodes (`ExecuteNonQueryAsync`, `QueryAsync`, `QuerySingleOrDefaultAsync`, `GetSequenceAsync`) ont la signature de celles de la couche d'accès du client (`IAccesBDPlus`, au-dessus de Dapper). Le client fournit un adaptateur de pure délégation ; le package `Sentier.Dapper` fournit une implémentation sur une `DbConnection` pour qui n'a pas de couche d'accès. `GetSequenceAsync` porte la génération d'identifiant (B-PER-5).
+- **B-TX-11** Décision : le moteur ne manipule pas la `IDbConnection` directement. Il passe par un port, `IAccesBDSentier`, dont les quatre méthodes (`ExecuteNonQueryAsync`, `QueryAsync`, `QuerySingleOrDefaultAsync`, `GetSequenceAsync`) ont la signature de celles de la couche d'accès du client (`IAccesBDPlus`, au-dessus de Dapper). Le client fournit un adaptateur de pure délégation ; le package `Sentier.Dapper` fournit une implémentation sur une `IDbConnection` pour qui n'a pas de couche d'accès. `GetSequenceAsync` porte la génération d'identifiant (B-PER-5).
 - **B-TX-9** Le moteur étant asynchrone, le `TransactionScope` du client doit être créé avec le flux asynchrone activé (`TransactionScopeAsyncFlowOption.Enabled`). À documenter comme prérequis.
 - **B-TX-10** L'application cliente fonctionne déjà de cette façon (commandes sans objet transaction), sous Oracle comme sous SQLite ; le package s'aligne sur ce fonctionnement.
 
@@ -133,7 +133,7 @@ public class EnvoyerAvis(IServiceAvis avis) : ICommande
 
 ## 6. Points d'entrée du moteur
 
-Le moteur obtient la `DbConnection` du client (B-TX-1) ; ses opérations sont exposées par une interface de service.
+Le moteur obtient la `IDbConnection` du client (B-TX-1) ; ses opérations sont exposées par une interface de service.
 
 - **B-API-1** Démarrer une instance : définition, identifiant d'affaires, clé de corrélation fournie par le client, variables initiales, acteur.
 - **B-API-2** Compléter une tâche interactive, avec le nom de la transition choisie et des données.

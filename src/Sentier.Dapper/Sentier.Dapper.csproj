@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <PackageId>Sentier.Dapper</PackageId>
-    <Description>Accès aux données de Sentier sur une DbConnection, avec Dapper (Oracle et SQLite).</Description>
+    <Description>Accès aux données de Sentier sur une IDbConnection, avec Dapper (Oracle et SQLite).</Description>
     <IsPackable>true</IsPackable>
   </PropertyGroup>
   <ItemGroup>

@@ -5,7 +5,7 @@ Moteur de processus léger, livré en packages NuGet (.NET 10) et embarqué dans
 | Package | Rôle | Dépendances |
 |---|---|---|
 | `Sentier` | Builder de définitions, moteur, SQL des tables | aucune |
-| `Sentier.Dapper` | `IAccesBDSentier` sur une `DbConnection` (Oracle, SQLite) | Dapper 2.1.79 |
+| `Sentier.Dapper` | `IAccesBDSentier` sur une `IDbConnection` (Oracle, SQLite) | Dapper 2.1.79 |
 | `Sentier.Autofac` | Module qui enregistre le moteur et découvre définitions et handlers | Autofac 8.3.0 |
 
 ## Construire
