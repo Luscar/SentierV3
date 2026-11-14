@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Sentier</PackageId>
+    <Description>Moteur de processus léger embarqué : définitions en code, exécution dans la transaction du client.</Description>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Sentier.Tests" />
+  </ItemGroup>
+</Project>

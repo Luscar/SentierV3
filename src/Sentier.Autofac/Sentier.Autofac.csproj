@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Sentier.Autofac</PackageId>
+    <Description>Module Autofac de Sentier : enregistre le moteur et découvre les définitions et les handlers.</Description>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Sentier\Sentier.csproj" />
+    <PackageReference Include="Autofac" />
+  </ItemGroup>
+</Project>

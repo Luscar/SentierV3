@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Sentier.Dapper</PackageId>
+    <Description>Accès aux données de Sentier sur une DbConnection, avec Dapper (Oracle et SQLite).</Description>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Sentier\Sentier.csproj" />
+    <PackageReference Include="Dapper" />
+  </ItemGroup>
+</Project>

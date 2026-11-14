@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Sentier.Autofac/Sentier.Autofac.csproj" />
+    <Project Path="src/Sentier.Dapper/Sentier.Dapper.csproj" />
+    <Project Path="src/Sentier/Sentier.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Sentier.Tests/Sentier.Tests.csproj" />
+  </Folder>
+</Solution>
