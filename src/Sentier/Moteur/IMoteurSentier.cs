@@ -40,6 +40,15 @@ public interface IMoteurSentier
     /// </summary>
     Task<ResultatSollicitation> DeclencherEcheanceAsync(long idInstance, string acteur, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Interrompt l'attente de signal ou de temps de l'instance active : l'échéance et l'abonnement au groupe sont
+    /// abandonnés, et l'instance va au nœud déclaré par SurInterruption, sinon au nœud suivant. Sans effet si
+    /// l'instance n'est pas arrêtée sur une attente de signal ou de temps : le résultat l'indique.
+    /// </summary>
+    /// <param name="noeud">Garde : l'attente n'est interrompue que si l'instance est arrêtée sur ce nœud.</param>
+    Task<ResultatSollicitation> InterrompreAttenteAsync(string cleCorrelation, string acteur, string? noeud = null,
+        Donnees? donnees = null, CancellationToken cancellationToken = default);
+
     /// <summary>Annule l'arbre d'instances : tâches ouvertes dans le bassin, échéances et sous-processus.</summary>
     Task<EtatInstance?> AnnulerAsync(string cleCorrelation, string acteur, CancellationToken cancellationToken = default);
 

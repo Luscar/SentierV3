@@ -46,9 +46,17 @@ internal sealed class ProcessusBuilder(string cle) : IProcessusBuilder
         return Ajouter(noeud);
     }
 
-    public IProcessusBuilder AttenteTemps(string id, TimeSpan duree) => Ajouter(new NoeudAttenteTemps(id) { Duree = duree });
+    public IProcessusBuilder AttenteTemps(string id, TimeSpan duree, Action<IAttenteTempsBuilder>? attente = null)
+        => AttenteTemps(new NoeudAttenteTemps(id) { Duree = duree }, attente);
 
-    public IProcessusBuilder AttenteTemps(string id, Variable<DateTime> date) => Ajouter(new NoeudAttenteTemps(id) { Date = date });
+    public IProcessusBuilder AttenteTemps(string id, Variable<DateTime> date, Action<IAttenteTempsBuilder>? attente = null)
+        => AttenteTemps(new NoeudAttenteTemps(id) { Date = date }, attente);
+
+    private ProcessusBuilder AttenteTemps(NoeudAttenteTemps noeud, Action<IAttenteTempsBuilder>? attente)
+    {
+        attente?.Invoke(new AttenteTempsBuilder(noeud, _erreurs));
+        return Ajouter(noeud);
+    }
 
     public IProcessusBuilder SousProcessus(string id, string cleDefinition, Action<ISousProcessusBuilder>? sorties = null)
     {
@@ -223,6 +231,12 @@ internal sealed class ProcessusBuilder(string cle) : IProcessusBuilder
         return actuelle;
     }
 
+    private static void Interrompre(Noeud noeud, string cible, List<string> erreurs)
+    {
+        if (noeud.Interruption is not null) erreurs.Add($"Nœud « {noeud.Id} » : la sortie d'interruption est déclarée deux fois.");
+        else noeud.Interruption = cible;
+    }
+
     private sealed class InteractifBuilder(ProcessusBuilder builder, NoeudInteractif noeud, List<string> erreurs) : IInteractifBuilder
     {
         public IInteractifBuilder Echeance(TimeSpan duree, string cible)
@@ -295,6 +309,21 @@ internal sealed class ProcessusBuilder(string cle) : IProcessusBuilder
         public IAttenteSignalBuilder Sur(string transition, string cible)
         {
             noeud.Transitions[transition] = cible;
+            return this;
+        }
+
+        public IAttenteSignalBuilder SurInterruption(string cible)
+        {
+            Interrompre(noeud, cible, erreurs);
+            return this;
+        }
+    }
+
+    private sealed class AttenteTempsBuilder(NoeudAttenteTemps noeud, List<string> erreurs) : IAttenteTempsBuilder
+    {
+        public IAttenteTempsBuilder SurInterruption(string cible)
+        {
+            Interrompre(noeud, cible, erreurs);
             return this;
         }
     }

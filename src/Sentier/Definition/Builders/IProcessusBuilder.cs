@@ -22,10 +22,10 @@ public interface IProcessusBuilder
     IProcessusBuilder AttenteSignal(string id, string signal, Action<IAttenteSignalBuilder>? attente = null);
 
     /// <summary>Attend une durée.</summary>
-    IProcessusBuilder AttenteTemps(string id, TimeSpan duree);
+    IProcessusBuilder AttenteTemps(string id, TimeSpan duree, Action<IAttenteTempsBuilder>? attente = null);
 
     /// <summary>Attend la date portée par une variable de l'instance.</summary>
-    IProcessusBuilder AttenteTemps(string id, Variable<DateTime> date);
+    IProcessusBuilder AttenteTemps(string id, Variable<DateTime> date, Action<IAttenteTempsBuilder>? attente = null);
 
     /// <summary>Démarre une instance enfant d'une autre définition ; le parent reprend à la fin de l'enfant.</summary>
     IProcessusBuilder SousProcessus(string id, string cleDefinition, Action<ISousProcessusBuilder>? sorties = null);

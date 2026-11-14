@@ -72,7 +72,7 @@ internal static class DiagrammeMermaid
         _ => $"[\"{Texte(noeud.Id)}\"]",
     };
 
-    /// <summary>Sorties d'un nœud : libellé de la flèche, nœud visé, et pointillé pour une escalade.</summary>
+    /// <summary>Sorties d'un nœud : libellé de la flèche, nœud visé, et pointillé pour une escalade ou une interruption.</summary>
     internal static IEnumerable<(string? Libelle, string Cible, bool Pointille)> Sorties(Noeud noeud)
     {
         switch (noeud)
@@ -108,6 +108,7 @@ internal static class DiagrammeMermaid
 
         if (noeud.EscaladeDuNoeud is { } escalade)
             yield return ($"échéance {(escalade.Duree is { } duree ? Duree(duree) : escalade.Date!.ToString())}", escalade.Noeud, true);
+        if (noeud.Interruption is { } interruption) yield return ("interruption", interruption, true);
     }
 
     private static string Libelle(Noeud noeud, string? detail)
