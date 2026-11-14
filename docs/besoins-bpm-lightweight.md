@@ -172,7 +172,7 @@ Le moteur obtient la `IDbConnection` du client (B-TX-1) ; ses opérations sont e
 - **B-PER-1** Le package conserve lui-même l'état des instances, dans ses propres tables, à travers la connexion du client.
 - **B-PER-2** Bases visées : Oracle en production, SQLite pour les tests. Le SQL du package doit fonctionner sur les deux.
 - **B-PER-3** Nom des tables : `{PRÉFIXE}_{nom}_{SUFFIXE}`, le préfixe et le suffixe étant fournis à l'enregistrement du package (exemple de la convention du client : `AT_DECLA_TAXE`).
-- **B-PER-4** Les noms de tables et de colonnes ci-dessous sont provisoires ; ils seront révisés par le client pour respecter les mnémoniques de son environnement, puis fixés dans le package. La seule configuration est le préfixe et le suffixe passés à l'enregistrement ; ils s'appliquent aux noms de tables, pas aux colonnes.
+- **B-PER-4** Les noms de tables, de colonnes, de séquences, d'index et de contraintes ci-dessous, ainsi que les valeurs codées, sont provisoires ; ils seront révisés par le client pour respecter les mnémoniques de son environnement, puis fixés dans le package. La seule configuration est le préfixe et le suffixe passés à l'enregistrement ; ils s'appliquent aux noms de tables, pas aux colonnes.
 - **B-PER-5** Les identifiants sont des `long`, alimentés par des séquences Oracle. Sous SQLite, où les séquences n'existent pas, le package utilise l'auto-incrément ; la génération d'identifiant est donc le seul point propre à chaque base.
 - **B-PER-8** Nom des séquences : `{PRÉFIXE}_S_{nom}_{SUFFIXE}` (exemple de la convention du client : `AT_S_NO_DECL_TAXE`). Le nom propre à chaque séquence sera révisé avec les colonnes.
 - **B-PER-7** **[Proposition]** Pour le reste, SQL commun aux deux bases : contrôle de concurrence par numéro de version (pas de verrou de ligne), variables d'instance en JSON dans une colonne texte.
@@ -212,6 +212,38 @@ Table **HISTORIQUE** — facultative (B-ET-5), une ligne par passage de nœud :
 | TRANSITION | Texte, nul | Transition empruntée à la sortie |
 | ACTEUR | Texte, nul | Acteur de l'appel |
 | DATE_EVENEMENT | Date-heure | |
+
+Autres objets de la base, eux aussi provisoires. Le préfixe et le suffixe s'appliquent aux tables et aux séquences ; les index et les contraintes prennent le nom complet de leur table.
+
+| Objet | Nom (provisoire) | Rôle |
+|---|---|---|
+| Table | `{PRÉFIXE}_INSTANCE_{SUFFIXE}` | Instances |
+| Table | `{PRÉFIXE}_HISTORIQUE_{SUFFIXE}` | Historique |
+| Séquence | `{PRÉFIXE}_S_INSTANCE_{SUFFIXE}` | Alimente `ID_INSTANCE` |
+| Séquence | `{PRÉFIXE}_S_HISTORIQUE_{SUFFIXE}` | Alimente `ID_HISTORIQUE` |
+| Clé primaire | `{table INSTANCE}_PK` | `ID_INSTANCE` |
+| Clé primaire | `{table HISTORIQUE}_PK` | `ID_HISTORIQUE` |
+| Index unique | `{table INSTANCE}_U1` | `CLE_CORRELATION` des instances de tête seulement (B-ET-2) |
+| Index | `{table INSTANCE}_I1` | `CLE_CORRELATION` |
+| Index | `{table INSTANCE}_I2` | `REF_TACHE` |
+| Index | `{table INSTANCE}_I3` | `STATUT`, `TYPE_ATTENTE`, `DATE_ECHEANCE` |
+| Index | `{table INSTANCE}_I4` | `GROUPE_SIGNAL` |
+| Index | `{table HISTORIQUE}_I1` | `ID_INSTANCE` |
+
+Sous SQLite, chaque séquence est une table à auto-incrément du même nom, avec une colonne `ID`.
+
+Valeurs codées écrites dans les colonnes, provisoires elles aussi :
+
+| Colonne | Valeurs (provisoires) |
+|---|---|
+| `STATUT` | `EN_COURS`, `TERMINEE`, `ANNULEE` |
+| `TYPE_ATTENTE` | `TACHE`, `SIGNAL`, `TEMPS`, `SOUS_PROC` |
+| `EVENEMENT` | `ENTREE`, `SORTIE`, `ANNULATION` |
+| `TRANSITION` | Valeurs réservées par le moteur : `echeance` (escalade, B-N-5) et `repositionnement` (B-DEF-7). Les autres valeurs viennent des définitions : branche d'une décision, signal ou transition nommée. |
+
+Types Oracle générés aujourd'hui : `NUMBER(19)` pour les identifiants et références, `NUMBER(10)` pour `NO_VERSION`, `VARCHAR2(200)` pour les textes, `VARCHAR2(10)` pour `STATUT`, `TYPE_ATTENTE` et `EVENEMENT`, `CLOB` pour `DONNEES`, `TIMESTAMP` pour les dates.
+
+Dans le code, ces noms sont fixés à quatre endroits : `NomsSentier.cs` (tables et séquences), `SchemaSentier.cs` (colonnes, index, contraintes, types), `Depot.cs` (le SQL) et `Codes.cs` (valeurs codées).
 
 Il n'y a pas de table pour les signaux attendus, les abonnements aux groupes ni les échéances : avec un seul nœud actif par instance, le nœud courant et la définition en code suffisent à les retrouver.
 
@@ -319,7 +351,7 @@ Décision : le client génère une clé de corrélation au démarrage d'un proce
 
 ## 11. Questions ouvertes
 
-Aucune pour l'instant. Restent à faire côté client : la révision des noms de tables, de colonnes et de séquences (section 7.1), et le tri des éléments encore marqués **[Proposition]**.
+Aucune pour l'instant. Restent à faire côté client : la révision des noms de tables, de colonnes, de séquences, d'index et de contraintes, et des valeurs codées (section 7.1), et le tri des éléments encore marqués **[Proposition]**.
 
 Hypothèse retenue : un signal diffusé ou de groupe fait avancer plusieurs instances dans la même transaction (jugé acceptable) ; l'échec d'une seule annule l'envoi pour toutes.
 
