@@ -139,7 +139,7 @@ Options disponibles :
 | Option | Défaut | Effet |
 |---|---|---|
 | `Prefixe`, `Suffixe` | vides | Noms des tables et des séquences. |
-| `HistoriqueActif` | `false` | Consigne chaque entrée et sortie de nœud dans la table `HISTORIQUE`. |
+| `HistoriqueActif` | `false` | Consigne chaque entrée et sortie de nœud, et chaque annulation, dans la table `HISTORIQUE`. |
 | `NombreMaxEtapes` | `1000` | Nombre maximal de nœuds exécutés par appel, contre les boucles sans fin. |
 
 **Sans Autofac**, vous construisez le moteur vous-même et fournissez un `IResolveurSentier` qui crée les handlers :
@@ -306,7 +306,7 @@ public static readonly Variable<string> GroupeBlocage = Variable.Texte("groupeBl
 - Dans l'historique, la sortie par escalade porte la transition `echeance`.
 - Si une nouvelle version de la définition retire l'échéance du nœud, les instances déjà arrêtées dessus continuent d'attendre, sans échéance.
 
-**Attente d'un délai.** L'échéance est calculée à l'arrivée sur le nœud. Avec une variable, celle-ci doit avoir été écrite avant : absente, elle vaut la date minimale et l'échéance est due tout de suite. Le moteur ne déclenche rien seul (section 6.5).
+**Attente d'un délai.** L'échéance est calculée à l'arrivée sur le nœud. Avec une variable, celle-ci doit avoir été écrite avant : absente, le moteur lève `SentierException`. Le moteur ne déclenche rien seul (section 6.5).
 
 **Sous-processus.**
 
@@ -563,7 +563,7 @@ La liste contient les attentes de temps et les escalades (section 3.3) ; l'appel
 await moteur.AnnulerAsync("REMB-42", "chef", ct);
 ```
 
-L'annulation touche tout l'arbre : l'instance de tête et ses sous-processus en cours passent à `Annulee`, la tâche ouverte est annulée dans le bassin, et les écouteurs sont avisés pour chaque instance.
+L'annulation touche tout l'arbre : l'instance de tête et ses sous-processus en cours passent à `Annulee`, la tâche ouverte est annulée dans le bassin, et les écouteurs sont avisés pour chaque instance. Si l'historique est actif, chaque instance annulée y reçoit un événement `ANNULATION` sur son nœud courant.
 
 ### 6.7 Appels simultanés
 

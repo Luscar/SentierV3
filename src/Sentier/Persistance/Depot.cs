@@ -114,9 +114,10 @@ internal sealed class Depot(IAccesBDSentier bd, NomsSentier noms, TimeProvider h
             $"{Selection} WHERE GROUPE_SIGNAL = :GroupeSignal AND STATUT = 'EN_COURS' AND TYPE_ATTENTE = 'SIGNAL' ORDER BY ID_INSTANCE",
             new { GroupeSignal = groupe }, ct));
 
+    /// <summary>Attentes de temps et escalades dues. Le filtre sur le type d'attente suit l'index (STATUT, TYPE_ATTENTE, DATE_ECHEANCE).</summary>
     public async Task<List<Instance>> EcheancesDuesAsync(DateTime instant, CancellationToken ct)
         => Vers(await bd.QueryAsync<LigneInstance>(
-            $"{Selection} WHERE STATUT = 'EN_COURS' AND DATE_ECHEANCE IS NOT NULL AND DATE_ECHEANCE <= :Instant ORDER BY DATE_ECHEANCE",
+            $"{Selection} WHERE STATUT = 'EN_COURS' AND TYPE_ATTENTE IN ('TEMPS', 'TACHE', 'SIGNAL') AND DATE_ECHEANCE <= :Instant ORDER BY DATE_ECHEANCE",
             new { Instant = instant }, ct));
 
     public async Task<List<Instance>> EnCoursAsync(CancellationToken ct)

@@ -202,7 +202,7 @@ Table **HISTORIQUE** — facultative (B-ET-5), une ligne par passage de nœud :
 | ID_HISTORIQUE | Nombre (`long`) | Identifiant, alimenté par séquence |
 | ID_INSTANCE | Nombre | Instance concernée |
 | NOEUD | Texte | Nœud traversé |
-| EVENEMENT | Texte court | Entrée, sortie |
+| EVENEMENT | Texte court | Entrée, sortie, annulation |
 | TRANSITION | Texte, nul | Transition empruntée à la sortie |
 | ACTEUR | Texte, nul | Acteur de l'appel |
 | DATE_EVENEMENT | Date-heure | |

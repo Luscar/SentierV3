@@ -129,6 +129,40 @@ public class MoteurTests
         Assert.Equal([etat.RefTache!.Value], banc.Bassin.Annulees);
         Assert.Equal(2, banc.Ecouteur.Fins.Count(f => f.Statut == StatutInstance.Annulee));
         await Assert.ThrowsAsync<TacheIntrouvableException>(() => banc.Moteur.CompleterTacheAsync(etat.RefTache.Value, "bob"));
+
+        // L'historique dit où chaque instance a été annulée, de la feuille vers la tête.
+        var annulations = await banc.Bd.QueryAsync<string>(
+            "SELECT NOEUD || ':' || ACTEUR FROM AT_HISTORIQUE_TAXE WHERE EVENEMENT = 'ANNULATION' ORDER BY ID_HISTORIQUE");
+        Assert.Equal(["comptabiliser:chef", "comptabilisation:chef"], annulations);
+    }
+
+    [Fact]
+    public async Task Attente_de_temps_sur_une_variable_absente()
+    {
+        using var banc = new Banc(new Rappel());
+        await Assert.ThrowsAsync<SentierException>(() => banc.Moteur.DemarrerAsync(new DemandeDemarrage("Rappel", 1, "r1", "alice")));
+
+        var date = banc.Horloge.Maintenant.DateTime.AddDays(3);
+        var etat = await banc.Moteur.DemarrerAsync(
+            new DemandeDemarrage("Rappel", 1, "r2", "alice") { Donnees = new Donnees().Avec(Rappel.Date, date) });
+        Assert.Equal(date, etat.DateEcheance);
+    }
+
+    [Fact]
+    public async Task Code_inconnu_en_base()
+    {
+        using var banc = new Banc();
+        await banc.Moteur.DemarrerAsync(banc.Demande());
+        await banc.Bd.ExecuteNonQueryAsync("UPDATE AT_INSTANCE_TAXE SET STATUT = 'BIZARRE'");
+        await Assert.ThrowsAsync<SentierException>(() => banc.Moteur.ObtenirEtatAsync("cle-1"));
+    }
+
+    private sealed class Rappel : IDefinitionProcessus
+    {
+        public static readonly Variable<DateTime> Date = Variable.Date("date");
+        public string Cle => "Rappel";
+
+        public void Definir(IProcessusBuilder p) => p.AttenteTemps("attendre", Date).Fin("fin");
     }
 
     [Fact]

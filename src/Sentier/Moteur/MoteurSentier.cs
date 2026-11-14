@@ -176,11 +176,13 @@ public sealed class MoteurSentier : IMoteurSentier
 
     public async Task<EtatInstance?> AnnulerAsync(string cleCorrelation, string acteur, CancellationToken cancellationToken = default)
     {
+        var appel = new Appel(acteur, false, _options.NombreMaxEtapes, cancellationToken);
         // De la feuille vers la tête : la tâche ouverte est annulée avant ses parents.
         foreach (var instance in await _depot.ChargerEnCoursAsync(cleCorrelation, cancellationToken))
         {
             if (instance is { Attente: TypeAttente.Tache, RefTache: { } refTache })
                 await _bassin.AnnulerTacheAsync(refTache, acteur, cancellationToken);
+            await HistoriserAsync(appel, instance, instance.NoeudCourant, "ANNULATION", null);
             instance.CesserAttente();
             instance.Statut = StatutInstance.Annulee;
             instance.DateFin = _depot.Maintenant;
@@ -253,6 +255,8 @@ public sealed class MoteurSentier : IMoteurSentier
                     return;
 
                 case NoeudAttenteTemps temps:
+                    if (temps.Duree is null && !instance.Variables.Contient(temps.Date!))
+                        throw new SentierException($"Nœud « {noeud.Id} » : la variable « {temps.Date} » de l'échéance n'a pas été écrite.");
                     instance.DateEcheance = temps.Duree is { } duree ? _depot.Maintenant + duree : instance.Variables.Lire(temps.Date!);
                     await AttendreAsync(appel, instance, TypeAttente.Temps);
                     return;
