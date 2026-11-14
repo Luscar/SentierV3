@@ -47,7 +47,7 @@ Sans couche d'accès maison, `Sentier.Dapper` fournit `new AccesBDDapper(connexi
 
 - Le moteur ne gère aucune transaction : le client ouvre un `TransactionScope` avec `TransactionScopeAsyncFlowOption.Enabled`.
 - Le SQL utilise des paramètres `:nom` et des colonnes aliasées sans soulignement, lus par Dapper sous Oracle comme sous SQLite.
-- Tables `{PRÉFIXE}_INSTANCE_{SUFFIXE}` et `{PRÉFIXE}_HISTORIQUE_{SUFFIXE}`, séquences `{PRÉFIXE}_S_INSTANCE_{SUFFIXE}` et `{PRÉFIXE}_S_HISTORIQUE_{SUFFIXE}`. `SchemaSentier.Creation(dialecte, options)` retourne les scripts de création ; le package ne les exécute jamais.
+- Tables `{PRÉFIXE}_INSTC_PROCS_{SUFFIXE}` et `{PRÉFIXE}_HIST_INSTC_PROCS_{SUFFIXE}`, séquences `{PRÉFIXE}_NO_SEQ_INSTC_PROCS_{SUFFIXE}` et `{PRÉFIXE}_NO_SEQ_HIST_INSTC_PROCS_{SUFFIXE}`. `SchemaSentier.Creation(dialecte, options)` retourne les scripts de création ; le package ne les exécute jamais.
 - `GetSequenceAsync` est le seul point propre à chaque base. `AccesBDDapper` lit `NEXTVAL` sous Oracle ; sous SQLite, une séquence est une table à auto-incrément du même nom.
 - Les dates sont en heure locale (`TimeProvider`, remplaçable à l'enregistrement).
 

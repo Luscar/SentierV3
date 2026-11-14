@@ -49,7 +49,7 @@ public class SuiviTests
 
         // La correspondance peut maintenant être retirée du code : les instances sont sur le nouveau nœud.
         var noeuds = await banc.Bd.QueryAsync<string>(
-            "SELECT NOEUD_COURANT FROM AT_INSTANCE_TAXE WHERE CLE_CORRELATION IN ('a', 'b') AND ID_INSTANCE_PARENT IS NULL ORDER BY ID_INSTANCE");
+            "SELECT ID_NOEUD_COUR FROM AT_INSTC_PROCS_TAXE WHERE CLE_CORREL IN ('a', 'b') AND NO_SEQ_PARN_INSTC_PROCS IS NULL ORDER BY NO_SEQ_INSTC_PROCS");
         Assert.Equal(["controle", "controle"], noeuds);
         var sansCorrespondance = banc.CreerMoteur(new MoteurTests.Renommee(false), new Identification(), new Comptabilisation());
         var suite = await sansCorrespondance.CompleterTacheAsync(a.RefTache!.Value, "bob");

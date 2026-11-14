@@ -21,7 +21,7 @@ L'exemple suivi tout au long du guide est une demande de remboursement. Un exemp
 | Notion | Ce que c'est |
 |---|---|
 | Définition | Une classe `IDefinitionProcessus` qui décrit les nœuds d'un processus. Elle est identifiée par sa clé. |
-| Instance | Une exécution d'une définition, conservée dans la table `INSTANCE`. |
+| Instance | Une exécution d'une définition, conservée dans la table `INSTC_PROCS`. |
 | Nœud | Une étape de la définition, identifiée par un texte unique dans la définition. |
 | Commande | Une classe `ICommande` du client, exécutée par un nœud systémique ou autour d'une tâche. |
 | Requête | Une classe `IRequete<TResultat>` du client, dont le résultat choisit la branche d'une décision. |
@@ -60,11 +60,11 @@ Avec ces options, les objets créés sont :
 
 | Objet | Nom |
 |---|---|
-| Table des instances | `AT_INSTANCE_TAXE` |
-| Table de l'historique | `AT_HISTORIQUE_TAXE` |
-| Séquences | `AT_S_INSTANCE_TAXE`, `AT_S_HISTORIQUE_TAXE` |
+| Table des instances | `AT_INSTC_PROCS_TAXE` |
+| Table de l'historique | `AT_HIST_INSTC_PROCS_TAXE` |
+| Séquences | `AT_NO_SEQ_INSTC_PROCS_TAXE`, `AT_NO_SEQ_HIST_INSTC_PROCS_TAXE` |
 
-Les scripts créent aussi un index unique, `AT_INSTANCE_TAXE_U1`, qui garantit une seule instance de tête par clé de corrélation. Les sous-processus partagent la clé de leur tête et en sont exclus.
+Les scripts créent aussi un index unique, `IX_01_AT_INSTC_PROCS_TAXE`, qui garantit une seule instance de tête par clé de corrélation. Les sous-processus partagent la clé de leur tête et en sont exclus.
 
 Le préfixe et le suffixe doivent être les mêmes dans les scripts et dans l'enregistrement du moteur (section 2.5).
 
@@ -142,7 +142,7 @@ Options disponibles :
 | Option | Défaut | Effet |
 |---|---|---|
 | `Prefixe`, `Suffixe` | vides | Noms des tables et des séquences. |
-| `HistoriqueActif` | `false` | Consigne chaque entrée et sortie de nœud, et chaque annulation, dans la table `HISTORIQUE`. |
+| `HistoriqueActif` | `false` | Consigne chaque entrée et sortie de nœud, et chaque annulation, dans la table `HIST_INSTC_PROCS`. |
 | `UrlMermaid` | jsDelivr | Adresse du module Mermaid chargé par les pages HTML du suivi (section 9.6). |
 | `NombreMaxEtapes` | `1000` | Nombre maximal de nœuds exécutés par appel, contre les boucles sans fin. |
 
