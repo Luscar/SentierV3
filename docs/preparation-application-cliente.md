@@ -65,7 +65,7 @@ Sans couche maison, `Sentier.Dapper` fournit `new AccesBDDapper(connexion, Diale
 Ce que l'implémentation doit respecter :
 
 - Le SQL du moteur utilise des paramètres `:nom`, passés en objet anonyme, et des colonnes aliasées sans soulignement.
-- `GetSequenceAsync` reçoit le nom complet de la séquence (`AT_S_INSTANCE_TAXE`) et retourne la valeur suivante.
+- `GetSequenceAsync` reçoit le nom complet de la séquence (`AT_NO_SEQ_INSTC_PROCS_TAXE`) et retourne la valeur suivante.
 - Le moteur n'ouvre, ne ferme ni ne valide rien : la connexion doit participer au `TransactionScope` de l'appelant (section 8).
 
 ### 3.2 `IBassinTaches` : le bassin de tâches
@@ -103,8 +103,8 @@ public sealed class AucunBassin : IBassinTaches
 
 | Option | Défaut | Effet |
 |---|---|---|
-| `Prefixe`, `Suffixe` | vides | Noms des tables et des séquences : `{PRÉFIXE}_INSTANCE_{SUFFIXE}`, `{PRÉFIXE}_S_INSTANCE_{SUFFIXE}`. |
-| `HistoriqueActif` | `false` | Consigne chaque entrée et sortie de nœud dans la table `HISTORIQUE`. |
+| `Prefixe`, `Suffixe` | vides | Noms des tables et des séquences : `{PRÉFIXE}_INSTC_PROCS_{SUFFIXE}`, `{PRÉFIXE}_NO_SEQ_INSTC_PROCS_{SUFFIXE}`. |
+| `HistoriqueActif` | `false` | Consigne chaque entrée et sortie de nœud dans la table `HIST_INSTC_PROCS`. |
 | `NombreMaxEtapes` | `1000` | Nombre maximal de nœuds exécutés par appel, contre les boucles sans fin. |
 
 Le préfixe et le suffixe doivent être ceux utilisés pour générer les scripts de création des tables. Un nom qui n'est pas un identifiant simple (lettres, chiffres, soulignement) est refusé.
@@ -284,9 +284,9 @@ foreach (var script in SchemaSentier.Creation(DialecteSentier.Oracle, options))
     Console.WriteLine(script + ";");
 ```
 
-Objets créés : `AT_INSTANCE_TAXE`, `AT_HISTORIQUE_TAXE`, et les séquences `AT_S_INSTANCE_TAXE` et `AT_S_HISTORIQUE_TAXE`. La table d'historique est créée même si `HistoriqueActif` est à `false`.
+Objets créés : `AT_INSTC_PROCS_TAXE`, `AT_HIST_INSTC_PROCS_TAXE`, et les séquences `AT_NO_SEQ_INSTC_PROCS_TAXE` et `AT_NO_SEQ_HIST_INSTC_PROCS_TAXE`. La table d'historique est créée même si `HistoriqueActif` est à `false`.
 
-Une base créée avec une version antérieure doit recevoir la colonne `GROUPE_SIGNAL` (texte de 200, nulle) et son index sur la table des instances, ainsi que l'index unique `_U1` sur la clé de corrélation des instances de tête. La création de cet index échoue si la table contient déjà deux têtes de même clé.
+Une base créée avec une version antérieure doit recevoir la colonne `GROUPE_SIGNAL` (texte de 200, nulle) et son index sur la table des instances, ainsi que l'index unique `IX_01_…` sur la clé de corrélation des instances de tête. La création de cet index échoue si la table contient déjà deux têtes de même clé.
 
 **Transaction.** Le moteur n'en gère aucune. Chaque appel se fait dans un `TransactionScope` ouvert par l'appelant, avec le flux asynchrone activé :
 

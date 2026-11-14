@@ -1,6 +1,6 @@
 namespace Sentier.Persistance;
 
-/// <summary>Ligne de la table INSTANCE telle que lue par la couche d'accès (colonnes aliasées sans soulignement).</summary>
+/// <summary>Ligne de la table INSTC_PROCS telle que lue par la couche d'accès (colonnes aliasées sans soulignement).</summary>
 public sealed class LigneInstance
 {
     public long IdInstance { get; set; }

@@ -2,15 +2,15 @@ using System.Text.RegularExpressions;
 
 namespace Sentier.Persistance;
 
-/// <summary>Noms des tables ({PRÉFIXE}_{nom}_{SUFFIXE}) et des séquences ({PRÉFIXE}_S_{nom}_{SUFFIXE}).</summary>
+/// <summary>Noms des tables ({PRÉFIXE}_{nom}_{SUFFIXE}) et des séquences ({PRÉFIXE}_NO_SEQ_{nom}_{SUFFIXE}).</summary>
 public sealed partial class NomsSentier
 {
     public NomsSentier(OptionsSentier options)
     {
-        TableInstance = Nom(options.Prefixe, "INSTANCE", options.Suffixe);
-        TableHistorique = Nom(options.Prefixe, "HISTORIQUE", options.Suffixe);
-        SequenceInstance = Nom(options.Prefixe, "S_INSTANCE", options.Suffixe);
-        SequenceHistorique = Nom(options.Prefixe, "S_HISTORIQUE", options.Suffixe);
+        TableInstance = Nom(options.Prefixe, "INSTC_PROCS", options.Suffixe);
+        TableHistorique = Nom(options.Prefixe, "HIST_INSTC_PROCS", options.Suffixe);
+        SequenceInstance = Nom(options.Prefixe, "NO_SEQ_INSTC_PROCS", options.Suffixe);
+        SequenceHistorique = Nom(options.Prefixe, "NO_SEQ_HIST_INSTC_PROCS", options.Suffixe);
     }
 
     public string TableInstance { get; }

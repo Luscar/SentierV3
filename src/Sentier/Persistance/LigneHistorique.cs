@@ -1,6 +1,6 @@
 namespace Sentier.Persistance;
 
-/// <summary>Ligne de la table HISTORIQUE telle que lue par la couche d'accès (colonnes aliasées sans soulignement).</summary>
+/// <summary>Ligne de la table HIST_INSTC_PROCS telle que lue par la couche d'accès (colonnes aliasées sans soulignement).</summary>
 public sealed class LigneHistorique
 {
     public long IdInstance { get; set; }

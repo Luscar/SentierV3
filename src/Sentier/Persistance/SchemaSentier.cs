@@ -18,48 +18,48 @@ public static class SchemaSentier
         {
             $"""
             CREATE TABLE {noms.TableInstance} (
-                ID_INSTANCE        {nombre} NOT NULL,
-                ID_AFFAIRE         {nombre} NOT NULL,
-                CLE_CORRELATION    {texte} NOT NULL,
-                CLE_DEFINITION     {texte} NOT NULL,
-                ID_INSTANCE_PARENT {nombre},
-                NOEUD_COURANT      {texte} NOT NULL,
-                STATUT             {court} NOT NULL,
-                NOM_FIN            {texte},
-                TYPE_ATTENTE       {court},
-                REF_TACHE          {nombre},
-                DATE_ECHEANCE      {date},
-                GROUPE_SIGNAL      {texte},
-                DONNEES            {clob} NOT NULL,
-                NO_VERSION         {entier} NOT NULL,
-                ACTEUR_DEMARRAGE   {texte},
-                DATE_DEMARRAGE     {date} NOT NULL,
-                DATE_MODIFICATION  {date} NOT NULL,
-                DATE_FIN           {date},
-                CONSTRAINT {noms.TableInstance}_PK PRIMARY KEY (ID_INSTANCE)
+                NO_SEQ_INSTC_PROCS      {nombre} NOT NULL,
+                ID_AFFA                 {nombre} NOT NULL,
+                CLE_CORREL              {texte} NOT NULL,
+                CLE_DEFIN               {texte} NOT NULL,
+                NO_SEQ_PARN_INSTC_PROCS {nombre},
+                ID_NOEUD_COUR           {texte} NOT NULL,
+                TE_SEQ_INSTC_PROCS      {court} NOT NULL,
+                NOM_FIN                 {texte},
+                TYP_ATTEN               {court},
+                REF_TACHE               {nombre},
+                DAT_ECHNC               {date},
+                GROUPE_SIGNAL           {texte},
+                VAR_JSON                {clob} NOT NULL,
+                NO_VERSI                {entier} NOT NULL,
+                LOGON_CREA              {texte},
+                DH_CREA                 {date} NOT NULL,
+                DH_MODIF                {date} NOT NULL,
+                DH_FIN                  {date},
+                CONSTRAINT PK_01_{noms.TableInstance} PRIMARY KEY (NO_SEQ_INSTC_PROCS)
             )
             """,
             // Une seule instance de tête par clé de corrélation ; les sous-processus, qui partagent la clé, sont exclus.
             oracle
-                ? $"CREATE UNIQUE INDEX {noms.TableInstance}_U1 ON {noms.TableInstance} (CASE WHEN ID_INSTANCE_PARENT IS NULL THEN CLE_CORRELATION END)"
-                : $"CREATE UNIQUE INDEX {noms.TableInstance}_U1 ON {noms.TableInstance} (CLE_CORRELATION) WHERE ID_INSTANCE_PARENT IS NULL",
-            $"CREATE INDEX {noms.TableInstance}_I1 ON {noms.TableInstance} (CLE_CORRELATION)",
-            $"CREATE INDEX {noms.TableInstance}_I2 ON {noms.TableInstance} (REF_TACHE)",
-            $"CREATE INDEX {noms.TableInstance}_I3 ON {noms.TableInstance} (STATUT, TYPE_ATTENTE, DATE_ECHEANCE)",
-            $"CREATE INDEX {noms.TableInstance}_I4 ON {noms.TableInstance} (GROUPE_SIGNAL)",
+                ? $"CREATE UNIQUE INDEX IX_01_{noms.TableInstance} ON {noms.TableInstance} (CASE WHEN NO_SEQ_PARN_INSTC_PROCS IS NULL THEN CLE_CORREL END)"
+                : $"CREATE UNIQUE INDEX IX_01_{noms.TableInstance} ON {noms.TableInstance} (CLE_CORREL) WHERE NO_SEQ_PARN_INSTC_PROCS IS NULL",
+            $"CREATE INDEX IX_02_{noms.TableInstance} ON {noms.TableInstance} (CLE_CORREL)",
+            $"CREATE INDEX IX_03_{noms.TableInstance} ON {noms.TableInstance} (REF_TACHE)",
+            $"CREATE INDEX IX_04_{noms.TableInstance} ON {noms.TableInstance} (TE_SEQ_INSTC_PROCS, TYP_ATTEN, DAT_ECHNC)",
+            $"CREATE INDEX IX_05_{noms.TableInstance} ON {noms.TableInstance} (GROUPE_SIGNAL)",
             $"""
             CREATE TABLE {noms.TableHistorique} (
-                ID_HISTORIQUE  {nombre} NOT NULL,
-                ID_INSTANCE    {nombre} NOT NULL,
-                NOEUD          {texte} NOT NULL,
-                EVENEMENT      {court} NOT NULL,
-                TRANSITION     {texte},
-                ACTEUR         {texte},
-                DATE_EVENEMENT {date} NOT NULL,
-                CONSTRAINT {noms.TableHistorique}_PK PRIMARY KEY (ID_HISTORIQUE)
+                NO_SEQ_HIST_INSTC_PROCS {nombre} NOT NULL,
+                NO_SEQ_INSTC_PROCS      {nombre} NOT NULL,
+                ID_NOEUD                {texte} NOT NULL,
+                ID_EVEN                 {court} NOT NULL,
+                ID_CHEM                 {texte},
+                LOGON                   {texte},
+                DH_CREA                 {date} NOT NULL,
+                CONSTRAINT PK_01_{noms.TableHistorique} PRIMARY KEY (NO_SEQ_HIST_INSTC_PROCS)
             )
             """,
-            $"CREATE INDEX {noms.TableHistorique}_I1 ON {noms.TableHistorique} (ID_INSTANCE)",
+            $"CREATE INDEX IX_01_{noms.TableHistorique} ON {noms.TableHistorique} (NO_SEQ_INSTC_PROCS)",
         };
 
         // Seul point propre à chaque base : sous SQLite, une séquence est une table à auto-incrément du même nom.

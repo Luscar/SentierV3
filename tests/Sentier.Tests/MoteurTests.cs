@@ -132,7 +132,7 @@ public class MoteurTests
 
         // L'historique dit où chaque instance a été annulée, de la feuille vers la tête.
         var annulations = await banc.Bd.QueryAsync<string>(
-            "SELECT NOEUD || ':' || ACTEUR FROM AT_HISTORIQUE_TAXE WHERE EVENEMENT = 'ANNULATION' ORDER BY ID_HISTORIQUE");
+            "SELECT ID_NOEUD || ':' || LOGON FROM AT_HIST_INSTC_PROCS_TAXE WHERE ID_EVEN = 'ANNULATION' ORDER BY NO_SEQ_HIST_INSTC_PROCS");
         Assert.Equal(["comptabiliser:chef", "comptabilisation:chef"], annulations);
     }
 
@@ -153,7 +153,7 @@ public class MoteurTests
     {
         using var banc = new Banc();
         await banc.Moteur.DemarrerAsync(banc.Demande());
-        await banc.Bd.ExecuteNonQueryAsync("UPDATE AT_INSTANCE_TAXE SET STATUT = 'BIZARRE'");
+        await banc.Bd.ExecuteNonQueryAsync("UPDATE AT_INSTC_PROCS_TAXE SET TE_SEQ_INSTC_PROCS = 'BIZARRE'");
         await Assert.ThrowsAsync<SentierException>(() => banc.Moteur.ObtenirEtatAsync("cle-1"));
     }
 
@@ -186,7 +186,7 @@ public class MoteurTests
         var etat = await banc.Moteur.DemarrerAsync(banc.Demande());
 
         // Un autre appel a modifié l'instance entre la lecture et l'écriture.
-        var bd = new AccesBDEntrelace(banc.Bd, "UPDATE", "UPDATE AT_INSTANCE_TAXE SET NO_VERSION = NO_VERSION + 1");
+        var bd = new AccesBDEntrelace(banc.Bd, "UPDATE", "UPDATE AT_INSTC_PROCS_TAXE SET NO_VERSI = NO_VERSI + 1");
         var moteur = new MoteurSentier(new RegistreDefinitions([new DeclarationOriginale(), new Identification(), new Comptabilisation()]),
             bd, new ResolveurJournal(banc.Journal), banc.Bassin, [], banc.Options, banc.Horloge);
         await Assert.ThrowsAsync<ConflitConcurrenceException>(() => moteur.CompleterTacheAsync(etat.RefTache!.Value, "bob", "doublon"));
@@ -198,9 +198,9 @@ public class MoteurTests
         using var banc = new Banc();
 
         // Un autre appel a démarré une instance avec la même clé entre la vérification et l'insertion.
-        var bd = new AccesBDEntrelace(banc.Bd, "INSERT INTO AT_INSTANCE_TAXE", """
-            INSERT INTO AT_INSTANCE_TAXE (ID_INSTANCE, ID_AFFAIRE, CLE_CORRELATION, CLE_DEFINITION, NOEUD_COURANT, STATUT,
-                                          DONNEES, NO_VERSION, DATE_DEMARRAGE, DATE_MODIFICATION)
+        var bd = new AccesBDEntrelace(banc.Bd, "INSERT INTO AT_INSTC_PROCS_TAXE", """
+            INSERT INTO AT_INSTC_PROCS_TAXE (NO_SEQ_INSTC_PROCS, ID_AFFA, CLE_CORREL, CLE_DEFIN, ID_NOEUD_COUR, TE_SEQ_INSTC_PROCS,
+                                          VAR_JSON, NO_VERSI, DH_CREA, DH_MODIF)
             VALUES (999, 42, 'cle-1', 'DeclOrign', 'verification', 'EN_COURS', '{}', 1, '2026-01-15', '2026-01-15')
             """);
         var moteur = new MoteurSentier(new RegistreDefinitions([new DeclarationOriginale(), new Identification(), new Comptabilisation()]),
@@ -209,7 +209,7 @@ public class MoteurTests
         Assert.NotNull(erreur.InnerException); // le refus vient de l'index unique de la base
 
         var tetes = await banc.Bd.QueryAsync<long>(
-            "SELECT ID_INSTANCE FROM AT_INSTANCE_TAXE WHERE CLE_CORRELATION = 'cle-1' AND ID_INSTANCE_PARENT IS NULL");
+            "SELECT NO_SEQ_INSTC_PROCS FROM AT_INSTC_PROCS_TAXE WHERE CLE_CORREL = 'cle-1' AND NO_SEQ_PARN_INSTC_PROCS IS NULL");
         Assert.Equal([999L], tetes);
 
         // Les sous-processus partagent la clé de leur tête sans heurter l'index.
@@ -246,7 +246,7 @@ public class MoteurTests
         using var banc = new Banc();
         await banc.Moteur.DemarrerAsync(banc.Demande());
         var noeuds = await banc.Bd.QueryAsync<string>(
-            "SELECT NOEUD || ':' || EVENEMENT FROM AT_HISTORIQUE_TAXE WHERE ID_INSTANCE = 1 ORDER BY ID_HISTORIQUE");
+            "SELECT ID_NOEUD || ':' || ID_EVEN FROM AT_HIST_INSTC_PROCS_TAXE WHERE NO_SEQ_INSTC_PROCS = 1 ORDER BY NO_SEQ_HIST_INSTC_PROCS");
         Assert.Equal(
             ["valider:ENTREE", "valider:SORTIE", "notifier:ENTREE", "notifier:SORTIE", "identification:ENTREE",
              "identification:SORTIE", "a-verifier:ENTREE", "a-verifier:SORTIE", "verification:ENTREE"],
@@ -318,7 +318,7 @@ public class MoteurTests
         await Assert.ThrowsAsync<TacheIntrouvableException>(() => moteur.CompleterTacheAsync(refTache, "bob"));
 
         var transitions = await banc.Bd.QueryAsync<string>(
-            "SELECT NOEUD FROM AT_HISTORIQUE_TAXE WHERE TRANSITION = 'echeance' ORDER BY ID_HISTORIQUE");
+            "SELECT ID_NOEUD FROM AT_HIST_INSTC_PROCS_TAXE WHERE ID_CHEM = 'echeance' ORDER BY NO_SEQ_HIST_INSTC_PROCS");
         Assert.Equal(["attente", "relance"], transitions);
     }
 
