@@ -286,7 +286,7 @@ foreach (var script in SchemaSentier.Creation(DialecteSentier.Oracle, options))
 
 Objets créés : `AT_INSTANCE_TAXE`, `AT_HISTORIQUE_TAXE`, et les séquences `AT_S_INSTANCE_TAXE` et `AT_S_HISTORIQUE_TAXE`. La table d'historique est créée même si `HistoriqueActif` est à `false`.
 
-Une base créée avec une version antérieure doit recevoir la colonne `GROUPE_SIGNAL` (texte de 200, nulle) et son index sur la table des instances.
+Une base créée avec une version antérieure doit recevoir la colonne `GROUPE_SIGNAL` (texte de 200, nulle) et son index sur la table des instances, ainsi que l'index unique `_U1` sur la clé de corrélation des instances de tête. La création de cet index échoue si la table contient déjà deux têtes de même clé.
 
 **Transaction.** Le moteur n'en gère aucune. Chaque appel se fait dans un `TransactionScope` ouvert par l'appelant, avec le flux asynchrone activé :
 
@@ -313,7 +313,7 @@ Cet appel fait deux choses :
 - il résout le suivi, donc construit le registre : une définition invalide lève `DefinitionInvalideException` au démarrage plutôt qu'au premier usage ;
 - il liste les instances en cours que le code livré ne sait plus faire avancer : définition ou nœud retiré sans correspondance, ou nœud devenu d'une autre nature d'attente.
 
-Le moteur n'exécute jamais cette vérification seul : c'est à l'application de l'appeler, au démarrage ou à la livraison d'une définition modifiée. `ISuiviSentier` offre aussi la migration des instances, le repositionnement, la lecture de l'historique et les diagrammes Mermaid (guide, section 9).
+Le moteur n'exécute jamais cette vérification seul : c'est à l'application de l'appeler, au démarrage ou à la livraison d'une définition modifiée. `ISuiviSentier` offre aussi la migration des instances, le repositionnement, la lecture de l'historique, les diagrammes Mermaid et les pages HTML (guide, section 9).
 
 ## 10. Liste de contrôle
 

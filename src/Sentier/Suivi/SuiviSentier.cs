@@ -8,6 +8,7 @@ public sealed class SuiviSentier : ISuiviSentier
     private readonly RegistreDefinitions _registre;
     private readonly Depot _depot;
     private readonly MoteurSentier _moteur;
+    private readonly OptionsSentier _options;
 
     /// <param name="moteur">Le moteur du même scope : le repositionnement exécute les nœuds par lui.</param>
     public SuiviSentier(RegistreDefinitions registre, IAccesBDSentier bd, OptionsSentier options, MoteurSentier moteur,
@@ -15,6 +16,7 @@ public sealed class SuiviSentier : ISuiviSentier
     {
         _registre = registre;
         _moteur = moteur;
+        _options = options;
         _depot = new Depot(bd, new NomsSentier(options), horloge ?? TimeProvider.System);
     }
 
@@ -54,34 +56,58 @@ public sealed class SuiviSentier : ISuiviSentier
             .Select(l => new EvenementHistorique(l.IdInstance, l.CleDefinition, l.Noeud, l.Evenement, l.Transition, l.Acteur, l.DateEvenement))
             .ToArray();
 
-    public string DiagrammeDefinition(string cleDefinition) => DiagrammeMermaid.Definition(_registre.Obtenir(cleDefinition));
+    public string DiagrammeDefinition(string cleDefinition, OrientationDiagramme orientation = OrientationDiagramme.Horizontale)
+        => DiagrammeMermaid.Definition(_registre.Obtenir(cleDefinition), orientation);
 
-    public async Task<string?> DiagrammeInstanceAsync(string cleCorrelation, CancellationToken cancellationToken = default)
+    public async Task<string?> DiagrammeInstanceAsync(string cleCorrelation, OrientationDiagramme orientation = OrientationDiagramme.Horizontale,
+        CancellationToken cancellationToken = default)
+        => await ChargerArbreAsync(cleCorrelation, cancellationToken) is { } arbre
+            ? await DiagrammeAsync(arbre, orientation, cancellationToken)
+            : null;
+
+    public string PageDefinition(string cleDefinition) => PageHtml.Definition(_registre.Obtenir(cleDefinition), _options.UrlMermaid);
+
+    public async Task<string?> PageInstanceAsync(string cleCorrelation, CancellationToken cancellationToken = default)
     {
-        var tete = await _depot.ChargerTeteAsync(cleCorrelation, cancellationToken);
+        if (await ChargerArbreAsync(cleCorrelation, cancellationToken) is not { } arbre) return null;
+        return PageHtml.Instance(cleCorrelation, arbre,
+            await DiagrammeAsync(arbre, OrientationDiagramme.Horizontale, cancellationToken),
+            await LireHistoriqueAsync(cleCorrelation, cancellationToken), _options.UrlMermaid);
+    }
+
+    /// <summary>De la tête à la feuille : la tête, puis ses sous-processus en cours ; nul si la clé est inconnue.</summary>
+    private async Task<List<(Instance Instance, DefinitionProcessus Definition, string? Courant)>?> ChargerArbreAsync(string cleCorrelation, CancellationToken ct)
+    {
+        var tete = await _depot.ChargerTeteAsync(cleCorrelation, ct);
         if (tete is null) return null;
 
-        // De la tête à la feuille : la tête, puis ses sous-processus en cours.
         var instances = new List<Instance> { tete };
         if (tete.EnCours)
-            instances.AddRange((await _depot.ChargerEnCoursAsync(cleCorrelation, cancellationToken))
-                .Where(i => i.Id != tete.Id).OrderBy(i => i.Id));
+            instances.AddRange((await _depot.ChargerEnCoursAsync(cleCorrelation, ct)).Where(i => i.Id != tete.Id).OrderBy(i => i.Id));
 
-        var arbre = new List<(string, DefinitionProcessus, string?, IReadOnlySet<string>)>();
-        foreach (var instance in instances)
+        return instances.Select(i =>
         {
-            var definition = _registre.Obtenir(instance.CleDefinition);
-            var visites = await _depot.NoeudsVisitesAsync(instance.Id, cancellationToken);
+            var definition = _registre.Obtenir(i.CleDefinition);
+            return (i, definition, definition.Resoudre(i.NoeudCourant));
+        }).ToList();
+    }
+
+    private async Task<string> DiagrammeAsync(List<(Instance Instance, DefinitionProcessus Definition, string? Courant)> arbre,
+        OrientationDiagramme orientation, CancellationToken ct)
+    {
+        var blocs = new List<(string, DefinitionProcessus, string?, IReadOnlySet<string>)>();
+        foreach (var (instance, definition, courant) in arbre)
+        {
             var statut = instance.Statut switch
             {
                 StatutInstance.EnCours => "en cours",
                 StatutInstance.Terminee => "terminée",
                 _ => "annulée",
             };
-            arbre.Add(($"{definition.Cle} — instance {instance.Id} ({statut})", definition,
-                definition.Resoudre(instance.NoeudCourant), visites));
+            blocs.Add(($"{definition.Cle} — instance {instance.Id} ({statut})", definition, courant,
+                await _depot.NoeudsVisitesAsync(instance.Id, ct)));
         }
-        return DiagrammeMermaid.Instance(arbre);
+        return DiagrammeMermaid.Instance(blocs, orientation);
     }
 
     /// <summary>Nœud de la définition où l'arrêt se résout, ou la raison pour laquelle les instances sont orphelines.</summary>

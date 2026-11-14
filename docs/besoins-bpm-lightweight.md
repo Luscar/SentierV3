@@ -38,7 +38,8 @@ Principe directeur : à chaque sollicitation (démarrage, fin de tâche, signal,
   - la migration : les correspondances (B-DEF-6) sont appliquées en base aux instances en cours, ce qui permet de les retirer ensuite du code ;
   - le repositionnement, opération de support : l'instance active est replacée sur un nœud de sa définition et exécutée à partir de là ; la tâche ouverte est annulée dans le bassin ;
   - la lecture de l'historique d'un arbre d'instances ;
-  - le diagramme Mermaid d'une définition, et celui d'un arbre d'instances avec le nœud courant et, si l'historique est actif, les nœuds traversés.
+  - une page HTML des détails d'une définition ou d'un arbre d'instances, diagramme Mermaid inclus ;
+  - le diagramme Mermaid (horizontal par défaut) d'une définition, et celui d'un arbre d'instances avec le nœud courant et, si l'historique est actif, les nœuds traversés.
 
 Esquisse d'API, à titre indicatif seulement :
 
@@ -159,7 +160,7 @@ Le moteur obtient la `IDbConnection` du client (B-TX-1) ; ses opérations sont e
 
 - **B-ET-1** Chaque instance porte des variables : fournies au démarrage, alimentées par le contenu des complétions de tâche et des signaux, lisibles par les commandes et les requêtes, modifiables par les commandes. Elles peuvent orienter un nœud décisionnel (B-N-8).
 - **B-ET-8** Les variables d'une définition sont déclarées une fois, en constantes typées sur la classe de la définition (comme les `Variable<T>` de Sentier V2), puis réutilisées partout : paramètres, décisions, lecture et écriture dans les handlers. Le nom n'est écrit qu'à la déclaration ; c'est lui qui est conservé avec l'instance.
-- **B-ET-2** Clé de corrélation sur l'instance : valeur opaque fournie par le client au démarrage, unique, sans signification d'affaires pour le moteur. Les sous-processus héritent de la clé de leur processus de tête.
+- **B-ET-2** Clé de corrélation sur l'instance : valeur opaque fournie par le client au démarrage, unique, sans signification d'affaires pour le moteur. Les sous-processus héritent de la clé de leur processus de tête. L'unicité est garantie en base par un index unique sur les instances de tête : deux démarrages simultanés avec la même clé ne passent pas tous les deux.
 - **B-ET-7** Identifiant d'affaires sur l'instance : un `long` fourni au démarrage, conservé par le moteur sans qu'il en connaisse le sens, hérité par les sous-processus et remis à chaque handler (B-ABS-10).
 - **B-ET-6** Un seul nœud actif par arbre d'instances (processus de tête et sous-processus) : pas de parallélisme. Un signal ciblé par clé de corrélation atteint donc sans ambiguïté le nœud en attente, qu'il soit dans le processus de tête ou dans un sous-processus.
 - **B-ET-3** **[Proposition]** Accès concurrent : deux appels simultanés sur la même instance ne doivent pas la corrompre (verrou de ligne ou numéro de version optimiste).

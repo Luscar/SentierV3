@@ -1,6 +1,6 @@
 namespace Sentier;
 
-public class SentierException(string message) : Exception(message);
+public class SentierException(string message, Exception? cause = null) : Exception(message, cause);
 
 /// <summary>La définition est refusée à la construction ; <see cref="Erreurs"/> liste tous les problèmes.</summary>
 public sealed class DefinitionInvalideException(string cle, IReadOnlyList<string> erreurs)
@@ -13,8 +13,8 @@ public sealed class DefinitionInconnueException(string cle)
     : SentierException($"Aucune définition de processus n'a la clé « {cle} ».");
 
 /// <summary>Une instance de tête existe déjà avec cette clé de corrélation.</summary>
-public sealed class CleCorrelationDejaUtiliseeException(string cle)
-    : SentierException($"La clé de corrélation « {cle} » est déjà utilisée.");
+public sealed class CleCorrelationDejaUtiliseeException(string cle, Exception? cause = null)
+    : SentierException($"La clé de corrélation « {cle} » est déjà utilisée.", cause);
 
 /// <summary>Aucune instance en cours n'attend cette tâche (déjà complétée, annulée ou inconnue).</summary>
 public sealed class TacheIntrouvableException(long refTache)

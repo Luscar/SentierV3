@@ -64,6 +64,8 @@ Avec ces options, les objets créés sont :
 | Table de l'historique | `AT_HISTORIQUE_TAXE` |
 | Séquences | `AT_S_INSTANCE_TAXE`, `AT_S_HISTORIQUE_TAXE` |
 
+Les scripts créent aussi un index unique, `AT_INSTANCE_TAXE_U1`, qui garantit une seule instance de tête par clé de corrélation. Les sous-processus partagent la clé de leur tête et en sont exclus.
+
 Le préfixe et le suffixe doivent être les mêmes dans les scripts et dans l'enregistrement du moteur (section 2.5).
 
 ### 2.3 Fournir l'accès aux données
@@ -141,6 +143,7 @@ Options disponibles :
 |---|---|---|
 | `Prefixe`, `Suffixe` | vides | Noms des tables et des séquences. |
 | `HistoriqueActif` | `false` | Consigne chaque entrée et sortie de nœud, et chaque annulation, dans la table `HISTORIQUE`. |
+| `UrlMermaid` | jsDelivr | Adresse du module Mermaid chargé par les pages HTML du suivi (section 9.6). |
 | `NombreMaxEtapes` | `1000` | Nombre maximal de nœuds exécutés par appel, contre les boucles sans fin. |
 
 **Sans Autofac**, vous construisez le moteur vous-même et fournissez un `IResolveurSentier` qui crée les handlers :
@@ -613,7 +616,7 @@ Ne changez ni la clé d'une définition ni le nom d'une variable tant que des in
 
 ## 9. Suivre et exploiter
 
-`ISuiviSentier` regroupe les outils de suivi et de support : vérification, migration, repositionnement, historique et diagrammes. Elle est séparée de `IMoteurSentier` et enregistrée par scope comme lui. Le moteur n'appelle jamais ces opérations : l'application les exécute quand elle le décide.
+`ISuiviSentier` regroupe les outils de suivi et de support : vérification, migration, repositionnement, historique, diagrammes et pages HTML. Elle est séparée de `IMoteurSentier` et enregistrée par scope comme lui. Le moteur n'appelle jamais ces opérations : l'application les exécute quand elle le décide.
 
 ### 9.1 Vérifier les instances
 
@@ -683,8 +686,10 @@ La liste couvre tout l'arbre de la clé de corrélation, sous-processus compris,
 foreach (var cle in suivi.ClesDefinitions)
     File.WriteAllText($"{cle}.mmd", suivi.DiagrammeDefinition(cle));
 
-string? diagramme = await suivi.DiagrammeInstanceAsync("REMB-42", ct);   // null si la clé est inconnue
+string? diagramme = await suivi.DiagrammeInstanceAsync("REMB-42", cancellationToken: ct);   // null si la clé est inconnue
 ```
+
+Les diagrammes se lisent de gauche à droite. Passez `OrientationDiagramme.Verticale` pour les obtenir de haut en bas.
 
 `DiagrammeDefinition` retourne un `flowchart` Mermaid de la définition :
 
@@ -701,6 +706,25 @@ string? diagramme = await suivi.DiagrammeInstanceAsync("REMB-42", ct);   // null
 Les flèches portent la valeur d'une branche, le signal ou la transition ; une escalade est en pointillé.
 
 `DiagrammeInstanceAsync` dessine l'arbre d'une clé de corrélation : un bloc pour l'instance de tête, puis un par sous-processus en cours. Le nœud courant de chaque instance est en évidence. Si l'historique est actif, les nœuds déjà traversés sont colorés ; sinon seul le nœud courant l'est. Pour une instance terminée ou annulée, seule la tête est dessinée.
+
+### 9.6 Pages HTML
+
+Deux outils retournent une page HTML complète, à écrire dans un fichier ou à servir par un écran de support :
+
+```csharp
+File.WriteAllText("DemandeRemboursement.html", suivi.PageDefinition("DemandeRemboursement"));
+
+string? page = await suivi.PageInstanceAsync("REMB-42", ct);   // null si la clé est inconnue
+```
+
+| Page | Contenu |
+|---|---|
+| `PageDefinition` | Le diagramme, la table des nœuds (type, commande ou tâche, sorties) et les correspondances. |
+| `PageInstanceAsync` | L'état de la tête, le diagramme de l'arbre, l'état de chaque instance de l'arbre, les variables et les nœuds de l'instance active (nœud courant en évidence), et l'historique. |
+
+- La page est autonome, sauf Mermaid : le navigateur le charge à l'adresse `OptionsSentier.UrlMermaid`, par défaut sur jsDelivr. Si les postes n'ont pas accès à Internet, hébergez le module Mermaid (ESM) et mettez son adresse dans l'option.
+- Tout le contenu est échappé, y compris les valeurs des variables.
+- La page d'instance affiche les variables : ne l'exposez qu'aux personnes autorisées à les voir.
 
 ## 10. Tester
 

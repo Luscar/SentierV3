@@ -38,13 +38,26 @@ public interface ISuiviSentier
     /// </summary>
     Task<IReadOnlyList<EvenementHistorique>> LireHistoriqueAsync(string cleCorrelation, CancellationToken cancellationToken = default);
 
-    /// <summary>Diagramme Mermaid (flowchart) d'une définition.</summary>
-    string DiagrammeDefinition(string cleDefinition);
+    /// <summary>Diagramme Mermaid (flowchart) d'une définition, horizontal par défaut.</summary>
+    string DiagrammeDefinition(string cleDefinition, OrientationDiagramme orientation = OrientationDiagramme.Horizontale);
 
     /// <summary>
     /// Diagramme Mermaid de l'arbre d'instances d'une clé de corrélation : la définition de la tête et celle de
     /// chaque sous-processus en cours, avec le nœud courant en évidence et, si l'historique est actif, les nœuds
     /// déjà traversés. Nul si la clé est inconnue.
     /// </summary>
-    Task<string?> DiagrammeInstanceAsync(string cleCorrelation, CancellationToken cancellationToken = default);
+    Task<string?> DiagrammeInstanceAsync(string cleCorrelation, OrientationDiagramme orientation = OrientationDiagramme.Horizontale,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Page HTML autonome d'une définition : son diagramme Mermaid, ses nœuds avec leurs sorties et ses
+    /// correspondances. Le navigateur charge Mermaid à l'adresse <see cref="OptionsSentier.UrlMermaid"/>.
+    /// </summary>
+    string PageDefinition(string cleDefinition);
+
+    /// <summary>
+    /// Page HTML autonome de l'arbre d'instances d'une clé de corrélation : son diagramme Mermaid, l'état de
+    /// chaque instance, les variables et les nœuds de l'instance active, et l'historique. Nul si la clé est inconnue.
+    /// </summary>
+    Task<string?> PageInstanceAsync(string cleCorrelation, CancellationToken cancellationToken = default);
 }

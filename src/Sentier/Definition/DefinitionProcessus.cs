@@ -21,6 +21,8 @@ public sealed class DefinitionProcessus
 
     internal IReadOnlyList<Noeud> ListeNoeuds { get; }
 
+    internal IReadOnlyDictionary<string, string> Correspondances => _correspondances;
+
     internal string Debut => ListeNoeuds[0].Id;
 
     internal Noeud Noeud(string id) => _parId.TryGetValue(id, out var noeud) ? noeud : throw new NoeudInconnuException(Cle, id);

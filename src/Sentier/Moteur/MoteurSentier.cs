@@ -70,11 +70,34 @@ public sealed class MoteurSentier : IMoteurSentier
             ActeurDemarrage = demande.Acteur,
             DateDemarrage = _depot.Maintenant,
         };
-        await _depot.InsererAsync(instance, cancellationToken);
+        try
+        {
+            await _depot.InsererAsync(instance, cancellationToken);
+        }
+        catch (Exception erreur) when (erreur is not OperationCanceledException)
+        {
+            // Deux démarrages simultanés : l'index unique de la base refuse le second. Si la clé est maintenant
+            // prise, c'est la cause ; sinon l'erreur d'origine est relancée telle quelle.
+            if (await CleEstPriseAsync(demande.CleCorrelation, cancellationToken))
+                throw new CleCorrelationDejaUtiliseeException(demande.CleCorrelation, erreur);
+            throw;
+        }
 
         var appel = new Appel(demande.Acteur, demande.AssignerPremiereTache, _options.NombreMaxEtapes, cancellationToken);
         await AvancerAsync(appel, instance, definition.Debut);
         return await EtatAsync(appel);
+    }
+
+    private async Task<bool> CleEstPriseAsync(string cleCorrelation, CancellationToken ct)
+    {
+        try
+        {
+            return await _depot.ChargerTeteAsync(cleCorrelation, ct) is not null;
+        }
+        catch (Exception erreur) when (erreur is not OperationCanceledException)
+        {
+            return false; // la connexion ne répond plus : l'erreur d'origine est plus utile
+        }
     }
 
     public async Task<EtatInstance> CompleterTacheAsync(long refTache, string acteur, string? transition = null,
