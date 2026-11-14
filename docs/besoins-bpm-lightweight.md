@@ -15,6 +15,7 @@ Principe directeur : à chaque sollicitation (démarrage, fin de tâche, signal,
 - **B-TX-3** Toutes les étapes exécutées lors d'un même appel (nœuds systémiques, décisions, création de tâches, changements d'état du moteur) partagent cette transaction : tout passe ou rien ne passe.
 - **B-TX-4** La transaction est transmise aux handlers de commandes et de requêtes du client pour qu'ils y participent.
 - **B-TX-5** **[Proposition]** En cas d'exception dans un handler, le moteur ne rattrape rien et ne fait aucune reprise : l'exception remonte et le client annule la transaction. L'instance reste donc dans son dernier état validé.
+- **B-TX-7** Toute l'API du moteur et tous les handlers sont asynchrones (`Task`, `CancellationToken`).
 - **B-TX-6** **[Proposition]** Documenter clairement que les effets hors base de données (courriel, appel HTTP) faits dans un handler ne sont pas transactionnels ; le patron recommandé côté client est une boîte d'envoi (outbox).
 
 ## 3. Définition de processus (builder fluent)
@@ -22,12 +23,14 @@ Principe directeur : à chaque sollicitation (démarrage, fin de tâche, signal,
 - **B-DEF-1** Une définition se construit en code avec un builder fluent très simple, sans XML ni BPMN ni concepteur graphique.
 - **B-DEF-2** Une définition est immuable une fois construite.
 - **B-DEF-3** **[Proposition]** La définition est validée à la construction (`Build()`) : nœud de départ unique, nœuds inatteignables, transitions vers un nœud inexistant, décision sans branche par défaut, identifiants en double.
-- **B-DEF-4** **[Proposition]** Chaque définition porte une clé et une version. Une instance en cours reste liée à la version avec laquelle elle a démarré.
+- **B-DEF-4** Décision : les définitions vivent uniquement en code ; elles ne sont pas enregistrées en base. Une instance n'est **pas** liée à une version : elle ne conserve que la clé de sa définition, son nœud courant et ses données. Quand le code change, toutes les instances en cours suivent la nouvelle définition à leur prochaine sollicitation (comportement attendu par les utilisateurs, comme avec RHPAM aujourd'hui).
+- **B-DEF-5** Conséquence : l'identifiant d'un nœud est un contrat. Le renommer ou le retirer touche les instances qui y sont arrêtées.
+- **B-DEF-6** **[Proposition]** Une définition peut déclarer une redirection « ancien nœud → nouveau nœud » pour les instances arrêtées sur un nœud disparu. Au démarrage de l'application, une vérification signale les instances arrêtées sur un nœud inconnu et sans redirection.
 
 Esquisse d'API, à titre indicatif seulement :
 
 ```csharp
-var definition = ProcessDefinition.Create("demande-conge", version: 1)
+var definition = ProcessDefinition.Create("demande-conge")
     .System("valider", new ValiderDemande())
     .Decision("besoin-approbation", new BesoinApprobationQuery(), d => d
         .When(true, "approuver")
@@ -59,7 +62,7 @@ var definition = ProcessDefinition.Create("demande-conge", version: 1)
 Précisions :
 
 - **B-N-1** Nœud interactif : l'action **pré** s'exécute dans la transaction qui crée la tâche ; l'action **post** s'exécute dans la transaction qui signale la complétion de la tâche. Les deux sont facultatives.
-- **B-N-2** **[Proposition]** Le résultat de la tâche interactive (ex. « approuvé » / « refusé ») peut déterminer la transition sortante, sans nœud décisionnel supplémentaire.
+- **B-N-2** Transitions nommées : un nœud d'attente (interactif ou signal) peut avoir plusieurs transitions sortantes nommées. L'appelant choisit la transition par son nom en complétant la tâche ou en envoyant le signal ; il ne désigne jamais un nœud. Remplace le `codeProchaineTache` de `AvancerATacheSuivanteAsync`.
 - **B-N-3** Sous-processus : l'enfant s'exécute dans la même transaction que le parent tant qu'il n'atteint pas de point d'attente.
 - **B-N-4** **[Proposition]** Passage de données entre parent et enfant : entrées à l'appel, sorties au retour.
 - **B-N-5** **[Proposition]** Échéance sur un nœud interactif ou une attente de signal (délai dépassé → transition d'escalade), pour éviter les instances bloquées indéfiniment.
@@ -73,25 +76,34 @@ Le moteur ne connaît que des interfaces ; le client fournit les implémentation
 - **B-ABS-2** **Signalement de fin de processus** : le client est avisé quand une instance se termine (complétée, annulée), dans la même transaction.
 - **B-ABS-3** **Commandes** : les nœuds systémiques et les actions pré/post lancent des commandes traitées par des handlers implémentés côté client.
 - **B-ABS-4** **Requêtes** : les nœuds décisionnels s'appuient sur des requêtes traitées côté client.
+- **B-ABS-8** Les handlers sont typés et asynchrones, sur des interfaces définies par le package (du genre `ICommandHandler<TCommande>` et `IQueryHandler<TRequete, TResultat>`). Le package ne dépend pas de MediatR, pour rester utilisable par d'autres applications ; un client qui le souhaite peut écrire un handler qui relaie vers MediatR.
 - **B-ABS-5** **[Proposition]** **Planification des échéances** : le moteur n'a pas de fil d'arrière-plan. Il déclare l'échéance au client (interface de planification) et le client rappelle le moteur à l'heure venue. Variante : le moteur expose « quelles échéances sont dues ? » et l'hôte interroge périodiquement.
 - **B-ABS-6** **[Proposition]** **Signalement des autres événements du cycle de vie** (instance démarrée, nœud entré/sorti, instance suspendue), utile pour l'audit et le suivi sans alourdir le moteur.
-- **B-ABS-7** **[Proposition]** Enregistrement simple par injection de dépendances (`services.AddBpm(...)`), sans l'imposer : le moteur doit rester utilisable sans conteneur.
+- **B-ABS-7** **Injection de dépendances** : l'application cliente utilise Autofac. Elle ouvre un scope et appelle le moteur à travers une couche de service enregistrée dans ses propres injections. L'enregistrement du package doit tenir en une ligne.
+  - Le cœur du package ne dépend d'aucun conteneur.
+  - **[Proposition]** Un package compagnon fournit un module Autofac (`builder.RegisterModule(...)`) qui enregistre le moteur et découvre, par balayage d'assemblies, les définitions de processus et les handlers.
+  - Le moteur et les handlers sont résolus dans le scope courant de l'application ; ils partagent donc ses services (dépôts, contexte utilisateur).
 
 ## 6. Points d'entrée du moteur
 
 Chaque appel reçoit la `IDbTransaction` du client.
 
-- **B-API-1** Démarrer une instance (définition, données initiales, clé d'affaires).
-- **B-API-2** Signaler la complétion d'une tâche interactive (avec son résultat).
-- **B-API-3** Envoyer un signal à une instance.
+- **B-API-1** Démarrer une instance : définition, clé de corrélation fournie par le client, données initiales, acteur.
+- **B-API-2** Compléter une tâche interactive, avec le nom de la transition choisie et des données.
+- **B-API-3** Envoyer un signal, de deux façons :
+  - **ciblé** : à l'instance désignée par une clé de corrélation ;
+  - **diffusé** : à toutes les instances en attente de ce signal, avec un filtre facultatif par définition.
+- **B-API-7** Un signal peut porter le nom d'une transition et des données qui initialisent ou modifient des variables de l'instance.
+- **B-API-8** Signal conditionnel : si rien n'attend ce signal, l'appel ne lève pas d'erreur et le résultat l'indique.
 - **B-API-4** Signaler qu'une échéance est atteinte.
 - **B-API-5** **[Proposition]** Annuler une instance : annule les tâches ouvertes dans le bassin, les échéances et les sous-processus enfants.
-- **B-API-6** **[Proposition]** Consulter l'état d'une instance (nœud courant, statut, données).
+- **B-API-6** Consulter l'état d'une instance par clé de corrélation (en cours ou non, nœud courant, données). Le moteur est la source de vérité sur la vie d'une instance.
 
 ## 7. État et données
 
 - **B-ET-1** **[Proposition]** Chaque instance porte un contexte de données (variables) lisible par les commandes et les requêtes, et modifiable par les commandes.
-- **B-ET-2** **[Proposition]** Clé d'affaires / de corrélation sur l'instance, pour retrouver « le processus du dossier X » et adresser un signal sans connaître l'identifiant technique.
+- **B-ET-2** Clé de corrélation sur l'instance : valeur opaque fournie par le client au démarrage, unique, sans signification d'affaires pour le moteur. Les sous-processus héritent de la clé de leur processus de tête.
+- **B-ET-6** Un seul nœud actif par arbre d'instances (processus de tête et sous-processus) : pas de parallélisme. Un signal ciblé par clé de corrélation atteint donc sans ambiguïté le nœud en attente, qu'il soit dans le processus de tête ou dans un sous-processus.
 - **B-ET-3** **[Proposition]** Accès concurrent : deux appels simultanés sur la même instance ne doivent pas la corrompre (verrou de ligne ou numéro de version optimiste).
 - **B-ET-4** **[Proposition]** Idempotence : compléter deux fois la même tâche ou recevoir deux fois la même échéance ne fait pas avancer l'instance deux fois.
 - **B-ET-5** **[Proposition]** Historique minimal des passages de nœuds (qui, quand, résultat), activable.
@@ -99,6 +111,7 @@ Chaque appel reçoit la `IDbTransaction` du client.
 ## 8. Exigences non fonctionnelles
 
 - **B-NF-1** Léger : aucune dépendance obligatoire hors BCL et `System.Data`.
+- **B-NF-6** Cible : .NET 10.
 - **B-NF-2** **[Proposition]** Aucun état statique ni fil d'arrière-plan ; le moteur est passif et ne travaille que lorsqu'on l'appelle.
 - **B-NF-3** **[Proposition]** Testabilité : implémentations en mémoire des abstractions fournies dans un package de test distinct, pour tester une définition sans base de données.
 - **B-NF-4** **[Proposition]** Observabilité : `ILogger` et `ActivitySource` facultatifs.
@@ -106,15 +119,15 @@ Chaque appel reçoit la `IDbTransaction` du client.
 
 ## 9. Cohabitation avec RHPAM
 
-Contexte : l'application utilise déjà RHPAM à travers `IServiceProcessusAffaires` (implémentations RHPAM, bouchon et service courant). Les deux moteurs devront vivre côte à côte pendant une période indéterminée.
+Contexte : l'application utilise déjà RHPAM à travers `IServiceProcessusAffaires` (implémentations RHPAM, bouchon et service courant). La cohabitation des deux moteurs est permanente, pas une étape de transition.
 
-> Cette section est basée sur la seule signature de l'interface. Les lectures marquées « à confirmer » sont des déductions à partir des noms.
+> Cette section est basée sur la signature de l'interface et sur les précisions données ensuite. Les implémentations et le catalogue de catégories restent à examiner.
 
 ### 9.1 Constat sur l'interface actuelle
 
 | Méthode actuelle | Ce qu'elle exprime | Ce qui est lié à l'affaire ou à RHPAM |
 |---|---|---|
-| `DemarrerProcessusAsync`, `DemarrerProcessusSynchroneAsync`, `DemarrerProcessusEventuellementAsync` | Démarrer une instance | Trois variantes qui exposent le mode d'appel de RHPAM (distant, différé — à confirmer) ; `TypeFormulaire` ; `logon` |
+| `DemarrerProcessusAsync`, `DemarrerProcessusSynchroneAsync`, `DemarrerProcessusEventuellementAsync` | Démarrer une instance | « Éventuellement » publie un message asynchrone qui appelle une des deux autres ; les deux autres ne diffèrent que par l'assignation automatique de la tâche au `logon` appelant ; `TypeFormulaire` est un critère d'aiguillage |
 | `EstProcessusEnCoursAsync` | Existe-t-il une instance active pour cette clé ? | Rien, sauf l'énumération `TypeProcessus` |
 | `EstProcessusDeclarationEnCoursAsync` | Même question, pour une déclaration | Cas particulier de la précédente |
 | `TerminerTacheAsync<T>` | Compléter une tâche interactive avec un contenu | Rien : déjà générique |
@@ -132,7 +145,7 @@ Trois problèmes de fond :
 
 - **B-COH-1** Le package NuGet ne contient **aucun** concept d'affaires : ni déclaration, ni période, ni formulaire, ni énumération du client. `IServiceProcessusAffaires` reste côté client, comme façade d'affaires.
 - **B-COH-2** Sous la façade, le client définit un port neutre unique, avec deux adaptateurs : un vers RHPAM, un vers le nouveau moteur. Les appelants actuels (une cinquantaine de références) ne changent pas.
-- **B-COH-3** Un moteur par type de processus : une configuration associe chaque `TypeProcessus` à son moteur. Elle permet de migrer un type à la fois.
+- **B-COH-3** Aiguillage par catalogue : le client possède un catalogue de catégories de processus. Une entrée associe une catégorie (énumération), plus un critère facultatif (par exemple le type de formulaire pour les déclarations), à un moteur et à une définition.
 - **B-COH-4** Une instance reste sur le moteur qui l'a démarrée jusqu'à sa fin. Aucune migration d'instance entre moteurs. L'aiguillage s'appuie sur la table de corrélation (section 9.4).
 - **B-COH-5** Les tâches du bassin portent le moteur d'origine, pour que la complétion d'une tâche soit acheminée au bon moteur.
 - **B-COH-6** Un processus ne peut pas appeler un sous-processus hébergé par l'autre moteur. Comme chaque sous-processus a son propre `TypeProcessus` (B-COH-16) et qu'il y a un moteur par type, la configuration doit placer un parent et ses sous-processus sur le même moteur ; les types liés basculent donc ensemble.
@@ -140,70 +153,56 @@ Trois problèmes de fond :
 
 ### 9.3 Ce que l'interface actuelle impose au nouveau moteur
 
-Ces besoins découlent directement des méthodes existantes ; sans eux, l'adaptateur ne peut pas être écrit.
-
-- **B-COH-8** *(couvert par la table de corrélation si elle est retenue telle que décrite en 9.4)* Clé d'affaires obligatoire sur l'instance (clé de définition + identifiant), et recherche d'une instance active par cette clé. Remplace la proposition B-ET-2 par un besoin ferme.
-- **B-COH-9** *(idem)* Signal adressé par clé d'affaires, pas seulement par identifiant d'instance.
-- **B-COH-10** Signal conditionnel : si l'instance n'attend pas ce signal, l'appel ne lève pas d'erreur et retourne un résultat qui l'indique (équivalent de `TerminerTacheSiEnAttenteAsync`).
+- **B-COH-8** Clé de corrélation, recherche et signal par cette clé : voir B-ET-2, B-API-3 et B-API-6.
+- **B-COH-10** Signal conditionnel (équivalent de `TerminerTacheSiEnAttenteAsync`) : voir B-API-8.
 - **B-COH-11** Un nœud d'attente peut accepter plusieurs signaux, chacun menant à sa propre transition. L'appelant n'a plus à essayer une liste de noms.
 - **B-COH-12** Les signaux et les complétions de tâche transportent un contenu (le `T contenu` actuel), versé dans les données de l'instance.
-- **B-COH-13** L'acteur (le `logon` actuel) est transmis au moteur à chaque appel et rendu disponible aux handlers.
-- **B-COH-14** Les identifiants d'instance et de tâche sont compatibles avec les `long` de l'interface actuelle (ou le registre de B-COH-4 fait la traduction).
-- **B-COH-15** Une seule opération de démarrage, transactionnelle. Le démarrage différé (« éventuellement ») devient une responsabilité du client, par exemple avec une boîte d'envoi.
-
-- **B-COH-16** Décision : `TypeSousProcessus` est retiré et remplacé par `TypeProcessus`. Un sous-processus est une définition de processus comme une autre, identifiée par son propre `TypeProcessus` ; il n'existe qu'un seul catalogue de définitions. `TerminerTacheSiEnAttenteAsync` cible donc le sous-processus par son `TypeProcessus`.
+- **B-COH-13** L'acteur (le `logon` actuel) est transmis au moteur à chaque appel, rendu disponible aux handlers et transmis au bassin de tâches à la création d'une tâche. L'assignation automatique à l'acteur reste une décision du bassin, pas du moteur.
+- **B-COH-14** Les identifiants de tâche restent compatibles avec les `long` de l'interface actuelle.
+- **B-COH-15** Une seule opération de démarrage, transactionnelle. Le démarrage différé (« éventuellement ») reste côté client : c'est un message asynchrone qui appelle ce démarrage.
+- **B-COH-16** Décision : `TypeSousProcessus` est retiré et remplacé par `TypeProcessus`. Un sous-processus est une définition comme une autre. Là où l'interface cible un sous-processus, le type sert de filtre : le signal n'est remis que si le nœud en attente appartient à une instance de ce type.
 
 ### 9.4 Table de corrélation (côté client)
 
-Décision : une table dédiée conserve les clés de corrélation et le type de processus. On ne cherche plus une instance en interrogeant les variables de processus qui contiennent les identifiants d'affaires. Cette table sert aussi à aiguiller vers le bon moteur.
+Décision : le client génère une clé de corrélation au démarrage d'un processus et la conserve dans une table de lien. On ne cherche plus une instance par les variables de processus qui contiennent les identifiants d'affaires.
 
-- **B-COR-1** La table appartient au client, pas au package NuGet. Elle est commune aux deux moteurs.
-- **B-COR-2** Contenu minimal d'une ligne :
+- **B-COR-1** La table appartient au client, pas au package. Elle est commune aux deux moteurs : la clé de corrélation est unique quel que soit le moteur.
+- **B-COR-2** Contenu d'une ligne :
 
 | Colonne | Rôle |
 |---|---|
-| Type de processus | `TypeProcessus` ; détermine le moteur |
-| Nature de la clé | Ex. déclaration, période de déclaration, identification système |
-| Valeur de la clé | L'identifiant d'affaires (`long`) |
-| Identifiant d'instance | Celui attribué par le moteur |
-| Statut | En cours, terminée, annulée |
-| Dates | Démarrage, fin |
+| Identifiant d'affaires | Celui de l'agrégat (déclaration, période, etc.) |
+| Type de processus | `TypeProcessus` du processus de tête |
+| Clé de corrélation | Générée par le client, transmise au moteur au démarrage |
+| Moteur **[Proposition]** | Moteur qui héberge l'instance |
+| Statut, dates | Indicatifs ; mis à jour par les écouteurs de fin de processus |
 
-- **B-COR-3a** Une instance de sous-processus a sa propre ligne, sous son propre `TypeProcessus`, avec la même clé d'affaires que son parent. Un signal destiné à un sous-processus se résout ainsi comme n'importe quel autre : (type de processus, clé) → instance.
-- **B-COR-3** Une instance peut avoir plusieurs clés (par exemple un numéro de déclaration et un numéro de période) : une ligne par clé, ou une table enfant.
-- **B-COR-4** La façade répond à `EstProcessusEnCoursAsync` et `EstProcessusDeclarationEnCoursAsync` directement depuis la table, sans appeler le moteur.
-- **B-COR-5** Signaux et recherches : la façade résout d'abord la clé d'affaires en (moteur, identifiant d'instance) dans la table, puis appelle le moteur avec l'identifiant d'instance.
-- **B-COR-6** Nouveau moteur : la ligne est écrite à l'intérieur de la même `IDbTransaction` que le démarrage, et le statut est mis à jour par le signalement de fin de processus (B-ABS-2), dans la transaction qui termine l'instance.
-- **B-COR-7** **[Proposition]** Conserver aussi le moteur sur chaque ligne, même s'il se déduit du type. Le jour où un type bascule de RHPAM au nouveau moteur, les instances déjà en cours doivent encore être acheminées vers RHPAM ; la configuration seule ne le permet pas.
-- **B-COR-8** **[Proposition]** Unicité d'une instance en cours par (type de processus, nature de clé, valeur), garantie par un index unique filtré, si la règle d'affaires le veut. Elle protège contre les doubles démarrages.
+- **B-COR-3** La table ne contient que les processus de tête. Les sous-processus n'y figurent pas : ils héritent de la clé de corrélation de leur parent, et le moteur achemine le signal au nœud actif de l'arbre (B-ET-6). Un sous-processus peut ainsi être exécuté plusieurs fois (boucle dans le parent) sans effet sur la table.
+- **B-COR-4** La façade résout (identifiant d'affaires, type de processus) en (moteur, clé de corrélation), puis appelle le moteur avec la clé.
+- **B-COR-5** Source de vérité : le moteur BPM, pas la table. Pour « le processus est-il en cours ? », la façade résout la clé dans la table puis interroge le moteur.
+- **B-COR-6** Fin de processus : un écouteur met la table à jour. Pour RHPAM, ce sont ses écouteurs d'événements de fin. Pour le nouveau moteur, c'est le signalement de fin de processus (B-ABS-2), dans la transaction qui termine l'instance.
+- **B-COR-7** Nouveau moteur : la ligne est écrite dans la même `IDbTransaction` que le démarrage.
+- **B-COR-8** **[Proposition]** Conserver le moteur sur la ligne, même s'il se déduit du catalogue. Si une entrée du catalogue change de moteur, les instances déjà en cours doivent encore être acheminées vers l'ancien.
 - **B-COR-9** **[Proposition]** RHPAM : l'appel distant et l'écriture dans la table ne sont pas atomiques. Prévoir l'ordre des opérations et une réconciliation (ligne sans instance, instance sans ligne).
+- **B-COR-10** Reprise de l'existant : les instances RHPAM déjà en cours doivent recevoir une ligne dans la table (et une clé de corrélation) pour que l'aiguillage soit uniforme. Travail à planifier côté client.
 
-Conséquence pour le package : la recherche et le signal par clé d'affaires (B-COH-8, B-COH-9) peuvent rester hors du moteur. Il lui suffit alors d'exposer des opérations par identifiant d'instance, ce qui le garde plus léger.
-
-## 10. Hors périmètre (proposé)
+## 10. Hors périmètre
 
 - Concepteur graphique, import/export BPMN.
-- Passerelles parallèles (fork/join) — à confirmer, voir question 3.
+- Parallélisme (passerelles fork/join) : non prévu pour le moment.
 - Gestion des utilisateurs, rôles et assignations (responsabilité du bassin de tâches).
 - Reprises automatiques, compensation, sagas distribuées.
-- Migration d'instances en cours vers une nouvelle version de définition.
+- Définitions enregistrées en base et versionnées.
 - Migration d'instances de RHPAM vers le nouveau moteur.
+- Multi-locataire (plusieurs organisations isolées dans une même base) : supposé non requis.
 
 ## 11. Questions ouvertes
 
-1. **Persistance de l'état du moteur.** Avec seulement une `IDbTransaction`, où vit l'état des instances ? Soit le moteur écrit lui-même ses tables via `transaction.Connection` (il faut alors gérer les dialectes SQL et le schéma), soit le client implémente une interface de stockage (plus léger pour le package, plus de travail pour le client).
-2. **Synchrone ou asynchrone.** `IDbTransaction` est une interface synchrone ; les handlers côté client seront-ils `async` ? Si oui, viser plutôt `DbTransaction`.
-3. **Parallélisme.** Un seul nœud actif par instance (beaucoup plus simple), ou branches parallèles ?
-4. **Forme des commandes/requêtes.** Objets typés avec handlers génériques (`ICommandHandler<T>`), ou un répartiteur unique fourni par le client (compatible MediatR ou autre) ?
-5. **Définitions.** Uniquement en code, ou aussi sérialisables (JSON) pour être stockées et versionnées en base ?
-6. **Signaux.** Adressés à une instance précise, ou diffusés à toutes les instances en attente de ce signal ?
-7. **Cibles .NET.** `netstandard2.0`, ou .NET 8+ seulement ?
-8. **Multi-locataire.** Besoin d'un identifiant de locataire sur les instances ?
-9. **Saut vers une tâche (`AvancerATacheSuivanteAsync`).** Le nouveau moteur doit-il permettre à l'appelant d'imposer le prochain nœud, ou ce cas se modélise-t-il par des transitions nommées dans la définition ? La deuxième option garde le flux dans la définition, mais demande de revoir les appelants concernés.
-10. **Sens exact des trois démarrages.** Que distinguent `DemarrerProcessusAsync`, `…SynchroneAsync` et `…EventuellementAsync` aujourd'hui ? La réponse confirme ou invalide B-COH-15.
-11. **Rôle de `TypeFormulaire`.** Sert-il à choisir une variante de définition, ou est-ce une simple donnée d'instance ? (`TypeSousProcessus` : réglé, voir B-COH-16.)
-12. **Fin de vie de RHPAM.** Cohabitation permanente, ou retrait une fois les instances en cours terminées ? Cela détermine l'effort à mettre dans le registre et l'aiguillage.
-13. **Fin d'une instance RHPAM.** Comment la table apprend-elle qu'une instance RHPAM est terminée (rappel de RHPAM, tâche finale du modèle, interrogation périodique) ? Sans cela, `EstProcessusEnCoursAsync` ne peut pas se fier à la table pour ces instances.
-14. **Reprise de l'existant.** Les instances RHPAM déjà en cours doivent-elles être chargées dans la table à la mise en service, ou garde-t-on la recherche par variables pour elles jusqu'à leur fin ?
-15. **Lien parent-enfant dans la table.** Faut-il une colonne « instance parente » sur la ligne d'un sous-processus, pour annuler ou retrouver les enfants d'un processus ?
-16. **Sous-processus répété.** Un même sous-processus peut-il tourner plusieurs fois en même temps pour une même clé d'affaires ? Si oui, l'unicité proposée en B-COR-8 ne tient pas pour ces types.
+1. **Persistance de l'état du moteur.** Où le moteur conserve-t-il ses instances (nœud courant, données, clé de corrélation) ? Soit le package écrit lui-même ses tables à travers la transaction reçue (il faut alors savoir quelle base viser : SQL Server, Oracle, autre), soit le client implémente une interface de stockage.
+2. **Type de la transaction.** Les handlers étant asynchrones, le package peut-il recevoir une `DbTransaction` (qui est aussi une `IDbTransaction`) ? Elle seule donne accès aux opérations asynchrones d'ADO.NET.
+3. **Réveil des échéances.** Qui rappelle le moteur quand une attente de temps arrive à terme : la messagerie asynchrone déjà en place, un planificateur existant, autre ?
+4. **Signal diffusé.** Il fait avancer plusieurs instances dans la même transaction : acceptable, ou faut-il une transaction par instance ? Et doit-il aussi atteindre les instances hébergées par RHPAM ?
+5. **Nœud retiré d'une définition.** Pour les instances arrêtées sur ce nœud : redirection déclarée dans la définition (B-DEF-6), ou interdiction de retirer un nœud occupé ?
+6. **Assignation automatique.** La distinction entre les deux démarrages actuels (assignation au `logon` appelant) est-elle encore utile ?
+7. **Unicité.** Peut-il y avoir deux instances en cours pour un même identifiant d'affaires et un même type de processus ?
+8. **Catalogue et implémentations.** À compléter après examen des photos (catalogue de catégories, classes du client).
