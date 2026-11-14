@@ -39,11 +39,13 @@ Esquisse d'API, à titre indicatif seulement :
 ```csharp
 public class DeclarationOriginale : IDefinitionProcessus
 {
+    public static readonly Variable<string> Langue = Variable.Texte("langue");   // variable déclarée une fois, typée
+
     public void Definir(IProcessusBuilder p) => p
         .Systeme<ValiderDeclaration>("valider")                       // sans paramètre : l'id d'affaires suffit
         .Systeme<EnvoyerAvis>("notifier", p => p                      // avec paramètres
-            .Valeur("modele", "AVIS_RECEPTION")                       //   valeur statique
-            .Variable("langue"))                                      //   variable de l'instance, sous son nom
+            .Valeur(EnvoyerAvis.Modele, "AVIS_RECEPTION")             //   valeur statique
+            .Variable(EnvoyerAvis.Langue, Langue))                    //   variable de l'instance
         .SousProcessus("identification", TypeProcessus.IDENTIFICATION)
         .Decision<DoitEtreVerifiee>("a-verifier", d => d
             .Si(true, "verification")
@@ -99,12 +101,13 @@ Le moteur ne connaît que des interfaces ; le client fournit les implémentation
   - d'une valeur statique ;
   - d'une variable de l'instance.
 - **B-ABS-10** **Contexte toujours transmis.** Chaque handler reçoit, en plus des paramètres, un contexte fourni par le moteur. L'identifiant d'affaires y figure toujours ; s'y ajoutent la clé de corrélation, l'acteur, le type de processus et l'accès aux variables. Une commande qui n'a besoin que de l'identifiant d'affaires ne déclare donc aucun paramètre.
-- **B-ABS-11** Décision : les paramètres s'appliquent comme dans Sentier V2, sans modèle. Il n'y a ni objet commande ni objet requête à écrire : chaque appel déclare ses paramètres nommés dans un petit bloc de la définition (voir l'esquisse de la section 3), et le handler les lit par leur nom dans le contexte, avec conversion vers le type demandé.
-  - Formes offertes dans la définition : `Valeur("nom", valeur)` (statique), `Variable("variable")` (sous son nom), `Variable("nom", "variable")` (sous un autre nom), `Variables("v1", "v2", …)`, `VariableOptionnelle("variable"[, défaut])`.
-  - Lecture dans le handler : `contexte.Parametre<T>("nom")`, et une variante avec valeur par défaut pour un paramètre facultatif.
-  - Un paramètre obligatoire absent, ou d'un type non convertible, lève une erreur qui nomme le nœud, la commande et le paramètre.
-  - Non repris de V2 : la liaison des paramètres aux propriétés d'une classe (`CommandeSentier<TParametres>`), qui réintroduit un modèle, et le paramètre « clé d'affaire », inutile puisque l'identifiant d'affaires est toujours dans le contexte (B-ABS-10).
-  - Conséquence acceptée : les noms de paramètres sont des chaînes, non vérifiées par le compilateur.
+- **B-ABS-11** Décision : ni modèle, ni chaîne magique. Il n'y a pas d'objet commande ou requête à écrire, et aucun nom de paramètre ou de variable n'est répété en chaîne entre la définition et le handler.
+  - Un paramètre est une clé typée, déclarée une seule fois en constante sur la classe du handler (`Parametre<T>`), sur le même principe que les variables (B-ET-8). La définition et le handler utilisent cette constante.
+  - Dans la définition : `Valeur(parametre, valeur)` (statique) et `Variable(parametre, variable)` (variable de l'instance). Le compilateur vérifie que la valeur ou la variable est du type du paramètre.
+  - Dans le handler : `contexte.Parametres.Lire(parametre)`, déjà du bon type.
+  - Un handler qui a seulement besoin d'une variable de l'instance la lit directement par sa constante (`contexte.Variables.Lire(variable)`), sans paramètre. Les paramètres servent à ce qui change d'un appel à l'autre de la même commande.
+  - À la construction, la définition est refusée si un paramètre déclaré obligatoire par le handler n'est pas fourni par l'appel.
+  - Non repris de V2 : les paramètres nommés par chaîne (`Valeur("nom", …)`, `Parametres.Lire<T>("nom")`) et la liaison aux propriétés d'une classe (`CommandeSentier<TParametres>`).
 - **B-ABS-8** La classe désignée dans la définition est le handler lui-même : elle implémente une interface asynchrone du package (du genre `ICommande`, et `IRequete<TResultat>` pour une décision), reçoit le contexte et peut injecter ses propres services. Le package ne dépend pas de MediatR, pour rester utilisable par d'autres applications ; un client qui le souhaite peut écrire un handler qui relaie vers MediatR.
 
 Esquisse d'un handler, à titre indicatif seulement :
@@ -112,8 +115,11 @@ Esquisse d'un handler, à titre indicatif seulement :
 ```csharp
 public class EnvoyerAvis(IServiceAvis avis) : ICommande
 {
+    public static readonly Parametre<string> Modele = Parametre.Texte("modele");
+    public static readonly Parametre<string> Langue = Parametre.Texte("langue");
+
     public Task ExecuterAsync(ContexteCommande c, CancellationToken ct)
-        => avis.EnvoyerAsync(c.IdAffaire, c.Parametre<string>("modele"), c.Parametre<string>("langue"), ct);
+        => avis.EnvoyerAsync(c.IdAffaire, c.Parametres.Lire(Modele), c.Parametres.Lire(Langue), ct);
 }
 ```
 
@@ -144,6 +150,7 @@ Le moteur obtient la `DbConnection` du client (B-TX-1) ; ses opérations sont ex
 ## 7. État et données
 
 - **B-ET-1** Chaque instance porte des variables : fournies au démarrage, alimentées par le contenu des complétions de tâche et des signaux, lisibles par les commandes et les requêtes, modifiables par les commandes. Elles peuvent orienter un nœud décisionnel (B-N-8).
+- **B-ET-8** Les variables d'une définition sont déclarées une fois, en constantes typées sur la classe de la définition (comme les `Variable<T>` de Sentier V2), puis réutilisées partout : paramètres, décisions, lecture et écriture dans les handlers. Le nom n'est écrit qu'à la déclaration ; c'est lui qui est conservé avec l'instance.
 - **B-ET-2** Clé de corrélation sur l'instance : valeur opaque fournie par le client au démarrage, unique, sans signification d'affaires pour le moteur. Les sous-processus héritent de la clé de leur processus de tête.
 - **B-ET-7** Identifiant d'affaires sur l'instance : un `long` fourni au démarrage, conservé par le moteur sans qu'il en connaisse le sens, hérité par les sous-processus et remis à chaque handler (B-ABS-10).
 - **B-ET-6** Un seul nœud actif par arbre d'instances (processus de tête et sous-processus) : pas de parallélisme. Un signal ciblé par clé de corrélation atteint donc sans ambiguïté le nœud en attente, qu'il soit dans le processus de tête ou dans un sous-processus.
