@@ -28,7 +28,7 @@ Principe directeur : à chaque sollicitation (démarrage, fin de tâche, signal,
   - ajouter, retirer ou déplacer une étape ne demande de toucher qu'à l'endroit concerné.
 - **B-DEF-9** Les sous-processus sont le moyen principal de garder une définition courte : un bloc d'étapes cohérent ou réutilisé devient une définition à part, appelée par une seule ligne.
 - **B-DEF-2** Une définition est immuable une fois construite.
-- **B-DEF-3** **[Proposition]** La définition est validée à la construction (`Build()`) : nœud de départ unique, nœuds inatteignables, transitions vers un nœud inexistant, décision sans branche par défaut, identifiants en double.
+- **B-DEF-3** **[Proposition]** La définition est validée à la construction : nœud de départ unique, nœuds inatteignables, transitions vers un nœud inexistant, décision sans branche par défaut, identifiants en double, chemin qui n'aboutit à aucune fin.
 - **B-DEF-4** Décision : les définitions vivent uniquement en code ; elles ne sont pas enregistrées en base. Une instance n'est **pas** liée à une version : elle ne conserve que la clé de sa définition, son nœud courant et ses données. Quand le code change, toutes les instances en cours suivent la nouvelle définition à leur prochaine sollicitation (comportement attendu par les utilisateurs, comme avec RHPAM aujourd'hui).
 - **B-DEF-5** Conséquence : l'identifiant d'un nœud est un contrat. Le renommer ou le retirer touche les instances qui y sont arrêtées.
 - **B-DEF-6** Migration des instances en cours : quand un nœud est retiré ou renommé, la définition déclare une correspondance « ancien nœud → nouveau nœud ». Une instance arrêtée sur l'ancien nœud est replacée sur le nouveau à sa prochaine sollicitation.
@@ -48,11 +48,14 @@ public class DeclarationOriginale : IDefinitionProcessus
         .Interactif("verification", "VERIF", t => t
             .Avant<PreparerVerification>()
             .Apres<ConsignerVerification>()
-            .Sur("refusee", "valider"))          // retour en arrière
+            .Sur("refusee", "valider")           // retour en arrière
+            .Sur("doublon", "fin-doublon"))
         .SousProcessus("comptabilisation", TypeProcessus.COMPTABILISATION)
         .AttenteSignal("attente-paiement", "paiement-recu")
         .AttenteTemps("delai-grace", TimeSpan.FromDays(2))
-        .Fin();
+        .Fin("cotisee")
+
+        .Fin("fin-doublon", "doublon");          // autre issue, atteinte par embranchement
 }
 ```
 
@@ -71,6 +74,9 @@ Précisions :
 
 - **B-N-7** Un nœud interactif porte un code de tâche, transmis au bassin à la création de la tâche.
 - **B-N-8** Un nœud décisionnel choisit sa branche soit sur le résultat d'une requête traitée côté client (cas le plus fréquent), soit sur la valeur d'une variable de l'instance.
+- **B-N-9** Fins multiples et nommées : un processus peut se terminer à plusieurs endroits, et chaque fin porte un nom qui décrit l'issue (par exemple « déclaration cotisée », « déclaration annulée », « doublon »).
+  - Le nom de la fin est conservé avec l'instance et transmis au signalement de fin de processus (B-ABS-2).
+  - **[Proposition]** Dans un processus parent, le nom de la fin d'un sous-processus peut choisir la transition sortante du nœud sous-processus, comme le fait le résultat d'une tâche.
 - **B-N-1** Nœud interactif : l'action **pré** s'exécute dans la transaction qui crée la tâche ; l'action **post** s'exécute dans la transaction qui signale la complétion de la tâche. Les deux sont facultatives.
 - **B-N-2** Transitions nommées : un nœud d'attente (interactif ou signal) peut avoir plusieurs transitions sortantes nommées. L'appelant choisit la transition par son nom en complétant la tâche ou en envoyant le signal ; il ne désigne jamais un nœud. Remplace le `codeProchaineTache` de `AvancerATacheSuivanteAsync`.
 - **B-N-3** Sous-processus : l'enfant s'exécute dans la même transaction que le parent tant qu'il n'atteint pas de point d'attente.
@@ -127,6 +133,7 @@ Le moteur obtient la `DbConnection` du client (B-TX-1) ; ses opérations sont ex
 - **B-PER-3** Nom des tables : `{PRÉFIXE}_{nom}_{SUFFIXE}`, le préfixe et le suffixe étant fournis à l'enregistrement du package (exemple de la convention du client : `AT_DECLA_TAXE`).
 - **B-PER-4** Les noms de tables et de colonnes ci-dessous sont provisoires ; ils seront révisés par le client pour respecter les mnémoniques de son environnement, puis fixés dans le package. La seule configuration est le préfixe et le suffixe passés à l'enregistrement ; ils s'appliquent aux noms de tables, pas aux colonnes.
 - **B-PER-5** Les identifiants sont des `long`, alimentés par des séquences Oracle. Sous SQLite, où les séquences n'existent pas, le package utilise l'auto-incrément ; la génération d'identifiant est donc le seul point propre à chaque base.
+- **B-PER-8** Nom des séquences : `{PRÉFIXE}_S_{nom}_{SUFFIXE}` (exemple de la convention du client : `AT_S_NO_DECL_TAXE`). Le nom propre à chaque séquence sera révisé avec les colonnes.
 - **B-PER-7** **[Proposition]** Pour le reste, SQL commun aux deux bases : contrôle de concurrence par numéro de version (pas de verrou de ligne), variables d'instance en JSON dans une colonne texte.
 - **B-PER-6** **[Proposition]** Le package fournit les scripts de création des tables pour Oracle ; il n'exécute aucune migration de schéma lui-même.
 
@@ -140,6 +147,7 @@ Table **INSTANCE** — une ligne par instance (processus de tête ou sous-proces
 | ID_INSTANCE_PARENT | Nombre, nul | Instance appelante, pour un sous-processus |
 | NOEUD_COURANT | Texte | Identifiant du nœud où l'instance est arrêtée |
 | STATUT | Texte court | En cours, terminée, annulée |
+| NOM_FIN | Texte, nul | Nom de la fin atteinte (B-N-9) |
 | TYPE_ATTENTE | Texte court, nul | Tâche, signal, temps, sous-processus |
 | REF_TACHE | Nombre, nul | Identifiant de la tâche dans le bassin, pour un nœud interactif |
 | DATE_ECHEANCE | Date-heure, nul | Échéance d'une attente de temps ou d'une escalade |
@@ -268,7 +276,6 @@ Décision : le client génère une clé de corrélation au démarrage d'un proce
 
 ## 11. Questions ouvertes
 
-1. **Nom des séquences.** Suivent-elles la même convention que les tables (`{PRÉFIXE}_{nom}_{SUFFIXE}`), ou une autre ?
-2. **Style du builder.** L'esquisse de la section 3 correspond-elle à ce qui est jugé « facile à lire » ? En particulier : noms de méthodes en français, cibles d'embranchement désignées par le nom du nœud.
+Aucune pour l'instant. Restent à faire côté client : la révision des noms de tables, de colonnes et de séquences (section 7.1), et le tri des éléments encore marqués **[Proposition]**.
 
 Hypothèse retenue : un signal diffusé fait avancer plusieurs instances dans la même transaction (cas rare, jugé acceptable).
