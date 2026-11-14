@@ -254,7 +254,7 @@ public sealed class Paiement : IDefinitionProcessus
 | `Decision(id, variable, d => ...)` | Choisit une branche selon la valeur d'une variable. | Non |
 | `Interactif(id, codeTache, t => ...)` | Crée une tâche dans le bassin et attend sa complétion. | Oui |
 | `AttenteSignal(id, signal, s => ...)` | Attend un signal nommé. | Oui |
-| `AttenteTemps(id, duree)` ou `AttenteTemps(id, variableDate)` | Attend une durée, ou la date portée par une variable. | Oui |
+| `AttenteTemps(id, duree, t => ...)` ou `AttenteTemps(id, variableDate, t => ...)` | Attend une durée, ou la date portée par une variable. | Oui |
 | `SousProcessus(id, cleDefinition, s => ...)` | Démarre une instance enfant d'une autre définition. | Seulement si l'enfant s'arrête |
 | `Fin(id, nomFin?)` | Termine l'instance. Sans nom, la fin porte l'identifiant du nœud. | — |
 
@@ -274,6 +274,7 @@ public sealed class Paiement : IDefinitionProcessus
 - `Sur(transition, noeud)` déclare une transition que l'émetteur du signal peut nommer pour choisir la destination.
 - `Groupe(variable)` ou `Groupe("valeur")` abonne l'instance à un groupe de corrélation (voir plus bas).
 - `Echeance(duree, noeud)` ou `Echeance(variableDate, noeud)` déclare une escalade (voir plus bas).
+- `SurInterruption(noeud)` déclare le nœud visé quand l'attente est interrompue (section 6.6). Sans cette déclaration, l'interruption mène au nœud suivant.
 
 **Groupe de corrélation.** Une attente de signal peut s'abonner à un groupe : un seul envoi au groupe atteint alors toutes les instances abonnées (section 6.4).
 
@@ -310,7 +311,7 @@ public static readonly Variable<string> GroupeBlocage = Variable.Texte("groupeBl
 - Dans l'historique, la sortie par escalade porte la transition `echeance`.
 - Si une nouvelle version de la définition retire l'échéance du nœud, les instances déjà arrêtées dessus continuent d'attendre, sans échéance.
 
-**Attente d'un délai.** L'échéance est calculée à l'arrivée sur le nœud. Avec une variable, celle-ci doit avoir été écrite avant : absente, le moteur lève `SentierException`. Le moteur ne déclenche rien seul (section 6.5).
+**Attente d'un délai.** L'échéance est calculée à l'arrivée sur le nœud. Avec une variable, celle-ci doit avoir été écrite avant : absente, le moteur lève `SentierException`. Le moteur ne déclenche rien seul (section 6.5). `SurInterruption(noeud)` déclare le nœud visé quand l'attente est interrompue (section 6.6) ; sans cette déclaration, l'interruption mène au nœud suivant, comme l'échéance.
 
 **Sous-processus.**
 
@@ -561,7 +562,23 @@ La liste contient les attentes de temps et les escalades (section 3.3) ; l'appel
 
 `DeclencherEcheanceAsync` est sans effet (`Traitee` à `false`) si l'échéance n'est pas due ou a déjà été déclenchée : le traitement peut tourner en plusieurs exemplaires ou être relancé.
 
-### 6.6 Annuler
+### 6.6 Interrompre une attente
+
+```csharp
+var resultat = await moteur.InterrompreAttenteAsync("REMB-42", "essais", noeud: "delai-contestation", cancellationToken: ct);
+if (!resultat.Traitee) { /* l'instance n'était pas arrêtée sur cette attente */ }
+```
+
+`InterrompreAttenteAsync` fait sortir l'instance active d'une attente de signal ou de temps sans attendre le signal ni la date. Elle sert surtout aux essais systèmes, pour ne pas attendre un délai de plusieurs jours, mais rien n'empêche de l'appeler en production.
+
+- L'instance va au nœud déclaré par `SurInterruption` sur le nœud d'attente, sinon au nœud suivant. Pour une attente de temps, c'est le chemin de l'échéance ; pour une attente de signal, celui du signal principal.
+- La sortie est complète : l'échéance d'escalade et l'abonnement au groupe de corrélation sont abandonnés.
+- `noeud` est une garde : l'attente n'est interrompue que si l'instance est arrêtée sur ce nœud. Donnez-le pour ne pas interrompre l'attente suivante par un appel en retard.
+- `donnees` s'utilise comme pour un signal.
+- Si l'instance n'est pas arrêtée sur une attente de signal ou de temps (tâche ouverte, instance terminée, clé inconnue), l'appel est sans effet : `Traitee` vaut `false`. Une tâche se complète (section 6.3) ; pour le reste, il y a le repositionnement (section 9.3).
+- Dans l'historique, la sortie porte la transition `interruption` et l'acteur de l'appel.
+
+### 6.7 Annuler
 
 ```csharp
 await moteur.AnnulerAsync("REMB-42", "chef", ct);
@@ -569,7 +586,7 @@ await moteur.AnnulerAsync("REMB-42", "chef", ct);
 
 L'annulation touche tout l'arbre : l'instance de tête et ses sous-processus en cours passent à `Annulee`, la tâche ouverte est annulée dans le bassin, et les écouteurs sont avisés pour chaque instance. Si l'historique est actif, chaque instance annulée y reçoit un événement `ANNULATION` sur son nœud courant.
 
-### 6.7 Appels simultanés
+### 6.8 Appels simultanés
 
 Chaque instance porte un numéro de version. Si deux appels modifient la même instance en même temps, le second lève `ConflitConcurrenceException` : laissez la transaction s'annuler, puis relisez l'état avant de décider de recommencer.
 
@@ -678,7 +695,7 @@ foreach (var e in await suivi.LireHistoriqueAsync("REMB-42", ct))
     Console.WriteLine($"{e.Date:g} {e.CleDefinition}/{e.Noeud} {e.Evenement} {e.Transition} ({e.Acteur})");
 ```
 
-La liste couvre tout l'arbre de la clé de corrélation, sous-processus compris, dans l'ordre des événements. `Evenement` vaut `ENTREE`, `SORTIE` ou `ANNULATION` ; `Transition` porte la branche, le signal ou la transition empruntée à la sortie, `echeance` pour une escalade et `repositionnement` pour un repositionnement. La liste est vide si `HistoriqueActif` était à `false` ou si la clé est inconnue.
+La liste couvre tout l'arbre de la clé de corrélation, sous-processus compris, dans l'ordre des événements. `Evenement` vaut `ENTREE`, `SORTIE` ou `ANNULATION` ; `Transition` porte la branche, le signal ou la transition empruntée à la sortie, `echeance` pour une escalade, `interruption` pour une attente interrompue et `repositionnement` pour un repositionnement. La liste est vide si `HistoriqueActif` était à `false` ou si la clé est inconnue.
 
 ### 9.5 Diagrammes Mermaid
 
@@ -703,7 +720,7 @@ Les diagrammes se lisent de gauche à droite. Passez `OrientationDiagramme.Verti
 | Sous-processus | Rectangle à doubles bords | La définition appelée |
 | Fin | Double cercle | Le nom de la fin, s'il diffère de l'identifiant |
 
-Les flèches portent la valeur d'une branche, le signal ou la transition ; une escalade est en pointillé.
+Les flèches portent la valeur d'une branche, le signal ou la transition ; une escalade ou une sortie d'interruption est en pointillé.
 
 `DiagrammeInstanceAsync` dessine l'arbre d'une clé de corrélation : un bloc pour l'instance de tête, puis un par sous-processus en cours. Le nœud courant de chaque instance est en évidence. Si l'historique est actif, les nœuds déjà traversés sont colorés ; sinon seul le nœud courant l'est. Pour une instance terminée ou annulée, seule la tête est dessinée.
 

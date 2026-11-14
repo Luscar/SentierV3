@@ -22,4 +22,10 @@ public interface IAttenteSignalBuilder
 
     /// <summary>Escalade à la date portée par une variable, qui doit avoir été écrite avant l'arrivée sur le nœud.</summary>
     IAttenteSignalBuilder Echeance(Variable<DateTime> date, string noeud);
+
+    /// <summary>
+    /// Nœud visé quand l'attente est interrompue (<see cref="IMoteurSentier.InterrompreAttenteAsync"/>).
+    /// Sans cette déclaration, l'interruption mène au nœud suivant.
+    /// </summary>
+    IAttenteSignalBuilder SurInterruption(string noeud);
 }

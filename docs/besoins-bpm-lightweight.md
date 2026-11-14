@@ -95,6 +95,7 @@ Précisions :
 - **B-N-4** **[Proposition]** Passage de données entre parent et enfant : entrées à l'appel, sorties au retour.
 - **B-N-5** Décision : échéance sur un nœud interactif ou une attente de signal, pour éviter les instances bloquées indéfiniment. Le nœud déclare un délai (durée, ou date portée par une variable) et un nœud d'escalade. Le délai dépassé, le déclenchement de l'échéance (B-API-4) envoie l'instance au nœud d'escalade ; pour un nœud interactif, la tâche ouverte est annulée dans le bassin et l'action **post** n'est pas exécutée. Un nœud quitté à temps n'a plus d'échéance.
 - **B-N-10** Décision : abonnement à un groupe de corrélation. Une attente de signal peut déclarer un groupe (valeur fixe, ou valeur d'une variable). L'instance s'y abonne en arrivant sur le nœud et s'en désabonne en le quittant, quelle que soit la sortie. Un signal envoyé au groupe (B-API-3) atteint toutes les instances abonnées. Exemple : les instances arrêtées sur « blocage de cotisation » s'abonnent au groupe du blocage, et le déblocage dans le domaine leur envoie un seul signal. Une instance peut s'abonner à des groupes différents à des nœuds différents.
+- **B-N-11** Décision : une attente de signal ou de temps peut déclarer un nœud d'interruption, visé quand l'attente est interrompue (B-API-11). Sans cette déclaration, l'interruption mène au nœud suivant.
 - **B-N-6** **[Proposition]** Garde contre les boucles sans fin : nombre maximal d'étapes par appel, configurable.
 
 ## 5. Abstractions côté client
@@ -153,6 +154,7 @@ Le moteur obtient la `IDbConnection` du client (B-TX-1) ; ses opérations sont e
 - **B-API-10** L'état d'une instance (B-API-6) inclut les signaux qu'elle attend.
 - **B-API-8** Signal conditionnel : si rien n'attend ce signal, l'appel ne lève pas d'erreur et le résultat l'indique.
 - **B-API-4** Échéances : le moteur expose la liste des échéances dues à un instant donné (attentes de temps et escalades, B-N-5), et l'opération qui déclenche une échéance. Un composant externe au package appelle ces deux opérations.
+- **B-API-11** Décision : interrompre une attente de signal ou de temps, par clé de corrélation, avec une garde facultative sur le nœud attendu et des données. L'instance quitte l'attente au complet (échéance et abonnement au groupe abandonnés) et va au nœud d'interruption (B-N-11), sinon au nœud suivant. Si l'instance n'est pas arrêtée sur une telle attente, l'appel ne lève pas d'erreur et le résultat l'indique. Sert surtout aux essais systèmes ; utilisable en production.
 - **B-API-5** **[Proposition]** Annuler une instance : annule les tâches ouvertes dans le bassin, les échéances et les sous-processus enfants.
 - **B-API-6** Consulter l'état d'une instance par clé de corrélation (en cours ou non, nœud courant, données). Le moteur est la source de vérité sur la vie d'une instance.
 

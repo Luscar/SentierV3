@@ -11,6 +11,9 @@ public sealed class MoteurSentier : IMoteurSentier
     /// <summary>Transition consignée dans l'historique quand un nœud est quitté par un repositionnement.</summary>
     public const string TransitionRepositionnement = "repositionnement";
 
+    /// <summary>Transition consignée dans l'historique quand une attente est quittée par une interruption.</summary>
+    public const string TransitionInterruption = "interruption";
+
     private static readonly ResultatSollicitation NonTraitee = new(false, null);
 
     private readonly RegistreDefinitions _registre;
@@ -197,6 +200,23 @@ public sealed class MoteurSentier : IMoteurSentier
         if (instance.RefTache is { } refTache) await _bassin.AnnulerTacheAsync(refTache, acteur, cancellationToken);
         await QuitterAttenteAsync(appel, instance, noeud, TransitionEcheance);
         await PoursuivreAsync(appel, instance, escalade.Noeud);
+        return new ResultatSollicitation(true, await EtatAsync(appel));
+    }
+
+    public async Task<ResultatSollicitation> InterrompreAttenteAsync(string cleCorrelation, string acteur, string? noeud = null,
+        Donnees? donnees = null, CancellationToken cancellationToken = default)
+    {
+        var instance = (await _depot.ChargerEnCoursAsync(cleCorrelation, cancellationToken))
+            .FirstOrDefault(i => i.Attente is TypeAttente.Signal or TypeAttente.Temps);
+        if (instance is null) return NonTraitee;
+
+        var attente = NoeudAttendu(instance);
+        if (noeud is not null && noeud != attente.Id) return NonTraitee;
+
+        var appel = new Appel(acteur, false, _options.NombreMaxEtapes, cancellationToken);
+        instance.Variables.Appliquer(donnees);
+        await QuitterAttenteAsync(appel, instance, attente, TransitionInterruption);
+        await PoursuivreAsync(appel, instance, attente.Interruption ?? attente.Suivant!);
         return new ResultatSollicitation(true, await EtatAsync(appel));
     }
 

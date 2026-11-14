@@ -55,6 +55,24 @@ public class DefinitionTests
     }
 
     [Fact]
+    public void Sortie_d_interruption_declaree_deux_fois_ou_vers_un_noeud_inexistant()
+    {
+        var erreurs = Erreurs(p => p
+            .AttenteSignal("a", "s", s => s.SurInterruption("fin").SurInterruption("fin"))
+            .AttenteTemps("t", TimeSpan.FromDays(1), t => t.SurInterruption("nulle-part"))
+            .Fin("fin"));
+        Assert.Contains(erreurs, e => e.Contains("« a » : la sortie d'interruption est déclarée deux fois"));
+        Assert.Contains(erreurs, e => e.Contains("« t » mène à « nulle-part », qui n'existe pas"));
+
+        // La sortie d'interruption compte pour atteindre un nœud, et le diagramme la montre en pointillé.
+        var definition = DefinitionProcessus.Construire(new Definition(p => p
+            .AttenteTemps("t", TimeSpan.FromDays(1), t => t.SurInterruption("fin-interrompue"))
+            .Fin("fin")
+            .Fin("fin-interrompue")));
+        Assert.Contains("n0 -.->|\"interruption\"| n2", DiagrammeMermaid.Definition(definition, OrientationDiagramme.Horizontale));
+    }
+
+    [Fact]
     public void Echeance_et_groupe_declares_deux_fois_ou_vers_un_noeud_inexistant()
     {
         var erreurs = Erreurs(p => p

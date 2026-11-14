@@ -349,6 +349,87 @@ public class MoteurTests
         Assert.Equal("attente", (await moteur.ObtenirEtatAsync("e"))!.NoeudCourant);
     }
 
+    [Fact]
+    public async Task Interruption_d_une_attente_de_signal_et_d_une_attente_de_temps()
+    {
+        using var banc = new Banc(new Interruptions());
+        var moteur = banc.Moteur;
+        var etat = await moteur.DemarrerAsync(new DemandeDemarrage("Interruptions", 1, "i", "alice"));
+        Assert.Equal("attente", etat.NoeudCourant);
+        Assert.NotNull(etat.DateEcheance);
+
+        // La garde : l'instance n'est pas sur ce nœud, rien ne bouge. Une clé inconnue n'est pas une erreur.
+        Assert.False((await moteur.InterrompreAttenteAsync("i", "essai", noeud: "delai")).Traitee);
+        Assert.False((await moteur.InterrompreAttenteAsync("absente", "essai")).Traitee);
+        Assert.Equal("attente", (await moteur.ObtenirEtatAsync("i"))!.NoeudCourant);
+
+        // Attente de signal sans sortie déclarée : nœud suivant ; l'escalade et l'abonnement au groupe tombent.
+        var resultat = await moteur.InterrompreAttenteAsync("i", "essai", noeud: "attente");
+        Assert.True(resultat.Traitee);
+        Assert.Equal("delai", resultat.Etat!.NoeudCourant);
+        Assert.Equal(TypeAttente.Temps, resultat.Etat.TypeAttente);
+        Assert.Null(resultat.Etat.GroupeSignal);
+        Assert.Empty(await moteur.SignalerGroupeAsync("LOT", "reponse", "sys"));
+
+        // Attente de temps : interrompue avant sa date, avec des données.
+        Assert.False((await moteur.DeclencherEcheanceAsync(etat.IdInstance, "sys")).Traitee);
+        resultat = await moteur.InterrompreAttenteAsync("i", "essai", donnees: new Donnees().Avec(Interruptions.Motif, "essai système"));
+        Assert.Equal("confirmation", resultat.Etat!.NoeudCourant);
+        Assert.Null(resultat.Etat.DateEcheance);
+        Assert.Equal("essai système", resultat.Etat.Variables.Lire(Interruptions.Motif));
+
+        // Sortie déclarée par SurInterruption.
+        resultat = await moteur.InterrompreAttenteAsync("i", "essai");
+        Assert.Equal(StatutInstance.Terminee, resultat.Etat!.Statut);
+        Assert.Equal("interrompue", resultat.Etat.NomFin);
+        Assert.False((await moteur.InterrompreAttenteAsync("i", "essai")).Traitee);
+
+        // Plus aucune échéance ne reste due.
+        banc.Horloge.Maintenant = banc.Horloge.Maintenant.AddDays(60);
+        Assert.Empty(await moteur.ListerEcheancesDuesAsync(banc.Horloge.Maintenant.DateTime));
+
+        var sorties = (await banc.CreerSuivi(new Interruptions()).LireHistoriqueAsync("i"))
+            .Where(e => e.Evenement == "SORTIE").Select(e => $"{e.Noeud}:{e.Transition}:{e.Acteur}");
+        Assert.Equal(["attente:interruption:essai", "delai:interruption:essai", "confirmation:interruption:essai"], sorties);
+    }
+
+    [Fact]
+    public async Task Interruption_sans_effet_sur_une_tache_et_dans_un_sous_processus()
+    {
+        using var banc = new Banc();
+        var moteur = banc.Moteur;
+
+        // Une tâche n'est pas une attente interruptible.
+        await moteur.DemarrerAsync(banc.Demande());
+        Assert.False((await moteur.InterrompreAttenteAsync("cle-1", "essai")).Traitee);
+        Assert.Equal("verification", (await moteur.ObtenirEtatAsync("cle-1"))!.NoeudCourant);
+        Assert.Empty(banc.Bassin.Annulees);
+
+        // L'attente de temps du parent s'interrompt comme son échéance : le processus se termine.
+        await moteur.CompleterTacheAsync(101, "bob");
+        await moteur.CompleterTacheAsync(102, "bob");
+        await moteur.SignalerAsync("cle-1", "paiement-recu", "sys");
+        var resultat = await moteur.InterrompreAttenteAsync("cle-1", "essai", noeud: "delai-grace");
+        Assert.Equal("cotisee", resultat.Etat!.NomFin);
+    }
+
+    private sealed class Interruptions : IDefinitionProcessus
+    {
+        public static readonly Variable<string> Motif = Variable.Texte("motif");
+        public string Cle => "Interruptions";
+
+        public void Definir(IProcessusBuilder p) => p
+            .AttenteSignal("attente", "reponse", s => s
+                .Groupe("LOT")
+                .Echeance(TimeSpan.FromDays(5), "fin-abandon"))
+            .AttenteTemps("delai", TimeSpan.FromDays(30))
+            .AttenteSignal("confirmation", "confirmee", s => s.SurInterruption("fin-interrompue"))
+            .Fin("traitee")
+
+            .Fin("fin-abandon", "abandonnee")
+            .Fin("fin-interrompue", "interrompue");
+    }
+
     private sealed class Blocage : IDefinitionProcessus
     {
         public static readonly Variable<string> Groupe = Variable.Texte("groupe");
