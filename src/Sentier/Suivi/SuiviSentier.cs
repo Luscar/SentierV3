@@ -2,15 +2,19 @@ using Sentier.Persistance;
 
 namespace Sentier;
 
-/// <summary>Suivi et exploitation : aucune instance n'avance ici. Une instance par scope du client, comme le moteur.</summary>
+/// <summary>Suivi et exploitation, à part du pilotage. Une instance par scope du client, comme le moteur.</summary>
 public sealed class SuiviSentier : ISuiviSentier
 {
     private readonly RegistreDefinitions _registre;
     private readonly Depot _depot;
+    private readonly MoteurSentier _moteur;
 
-    public SuiviSentier(RegistreDefinitions registre, IAccesBDSentier bd, OptionsSentier options, TimeProvider? horloge = null)
+    /// <param name="moteur">Le moteur du même scope : le repositionnement exécute les nœuds par lui.</param>
+    public SuiviSentier(RegistreDefinitions registre, IAccesBDSentier bd, OptionsSentier options, MoteurSentier moteur,
+        TimeProvider? horloge = null)
     {
         _registre = registre;
+        _moteur = moteur;
         _depot = new Depot(bd, new NomsSentier(options), horloge ?? TimeProvider.System);
     }
 
@@ -40,6 +44,15 @@ public sealed class SuiviSentier : ISuiviSentier
         }
         return new ResultatMigration(migrations, orphelines);
     }
+
+    public Task<EtatInstance> RepositionnerAsync(string cleCorrelation, string noeud, string acteur, Donnees? donnees = null,
+        CancellationToken cancellationToken = default)
+        => _moteur.RepositionnerAsync(cleCorrelation, noeud, acteur, donnees, cancellationToken);
+
+    public async Task<IReadOnlyList<EvenementHistorique>> LireHistoriqueAsync(string cleCorrelation, CancellationToken cancellationToken = default)
+        => (await _depot.HistoriqueAsync(cleCorrelation, cancellationToken))
+            .Select(l => new EvenementHistorique(l.IdInstance, l.CleDefinition, l.Noeud, l.Evenement, l.Transition, l.Acteur, l.DateEvenement))
+            .ToArray();
 
     public string DiagrammeDefinition(string cleDefinition) => DiagrammeMermaid.Definition(_registre.Obtenir(cleDefinition));
 

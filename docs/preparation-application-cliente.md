@@ -218,7 +218,7 @@ foreach (var type in concrets.Where(t => typeof(IEcouteurFinProcessus).IsAssigna
 services.AddScoped<IAccesBDSentier, AccesBDSentier>();
 services.AddScoped<IBassinTaches, BassinTaches>();
 services.AddScoped<IResolveurSentier, ResolveurServices>();
-services.AddScoped<IMoteurSentier>(sp => new MoteurSentier(
+services.AddScoped(sp => new MoteurSentier(
     sp.GetRequiredService<RegistreDefinitions>(),
     sp.GetRequiredService<IAccesBDSentier>(),
     sp.GetRequiredService<IResolveurSentier>(),
@@ -226,10 +226,12 @@ services.AddScoped<IMoteurSentier>(sp => new MoteurSentier(
     sp.GetServices<IEcouteurFinProcessus>(),
     sp.GetRequiredService<OptionsSentier>(),
     sp.GetService<TimeProvider>()));
+services.AddScoped<IMoteurSentier>(sp => sp.GetRequiredService<MoteurSentier>());
 services.AddScoped<ISuiviSentier>(sp => new SuiviSentier(
     sp.GetRequiredService<RegistreDefinitions>(),
     sp.GetRequiredService<IAccesBDSentier>(),
     sp.GetRequiredService<OptionsSentier>(),
+    sp.GetRequiredService<MoteurSentier>(),      // le repositionnement exécute les nœuds par le moteur du scope
     sp.GetService<TimeProvider>()));
 ```
 
@@ -311,7 +313,7 @@ Cet appel fait deux choses :
 - il résout le suivi, donc construit le registre : une définition invalide lève `DefinitionInvalideException` au démarrage plutôt qu'au premier usage ;
 - il liste les instances en cours que le code livré ne sait plus faire avancer : définition ou nœud retiré sans correspondance, ou nœud devenu d'une autre nature d'attente.
 
-Le moteur n'exécute jamais cette vérification seul : c'est à l'application de l'appeler, au démarrage ou à la livraison d'une définition modifiée. `ISuiviSentier` offre aussi la migration des instances et les diagrammes Mermaid (guide, section 9).
+Le moteur n'exécute jamais cette vérification seul : c'est à l'application de l'appeler, au démarrage ou à la livraison d'une définition modifiée. `ISuiviSentier` offre aussi la migration des instances, le repositionnement, la lecture de l'historique et les diagrammes Mermaid (guide, section 9).
 
 ## 10. Liste de contrôle
 

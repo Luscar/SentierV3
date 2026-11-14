@@ -613,7 +613,7 @@ Ne changez ni la clé d'une définition ni le nom d'une variable tant que des in
 
 ## 9. Suivre et exploiter
 
-`ISuiviSentier` regroupe ce qui ne fait avancer aucune instance : vérification, migration et diagrammes. Elle est séparée de `IMoteurSentier` et enregistrée par scope comme lui. Le moteur n'appelle jamais ces opérations : l'application les exécute quand elle le décide.
+`ISuiviSentier` regroupe les outils de suivi et de support : vérification, migration, repositionnement, historique et diagrammes. Elle est séparée de `IMoteurSentier` et enregistrée par scope comme lui. Le moteur n'appelle jamais ces opérations : l'application les exécute quand elle le décide.
 
 ### 9.1 Vérifier les instances
 
@@ -648,7 +648,36 @@ foreach (var m in resultat.Migrations)
 - Quand `Orphelines` est vide après la migration, les correspondances peuvent être retirées du code à la livraison suivante.
 - La migration n'écrit rien dans l'historique.
 
-### 9.3 Diagrammes Mermaid
+### 9.3 Repositionner une instance
+
+Opération de support, pour une instance coincée : elle la replace sur un nœud de sa définition et l'exécute à partir de là, jusqu'au prochain point d'attente ou à la fin.
+
+```csharp
+using var portee = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled);
+var etat = await suivi.RepositionnerAsync("REMB-42", "approbation", "support", cancellationToken: ct);
+portee.Complete();
+```
+
+- L'instance visée est l'instance active de l'arbre : la tête, ou le sous-processus en cours. Le nœud est cherché dans la définition de cette instance ; inconnu, l'appel lève `NoeudInconnuException`.
+- Le nœud visé est exécuté comme à une arrivée normale : une commande s'exécute, un nœud interactif crée une nouvelle tâche, une fin termine l'instance (et le parent reprend, pour un sous-processus).
+- La tâche ouverte est annulée dans le bassin, sans sa commande `Apres`. L'échéance et l'abonnement au groupe en cours sont abandonnés.
+- `donnees` corrige des variables avant la reprise, par exemple celle qui a mené l'instance au mauvais endroit.
+- L'opération fonctionne pour une instance orpheline (section 9.1) : c'est le moyen de la sortir d'un nœud retiré sans correspondance.
+- `SentierException` si aucune instance n'est en cours pour cette clé (inconnue, terminée ou annulée).
+- Dans l'historique, la sortie du nœud quitté porte la transition `repositionnement` et l'acteur de l'appel.
+
+Aucun contrôle n'empêche de sauter des étapes : réservez cette opération au support.
+
+### 9.4 Lire l'historique
+
+```csharp
+foreach (var e in await suivi.LireHistoriqueAsync("REMB-42", ct))
+    Console.WriteLine($"{e.Date:g} {e.CleDefinition}/{e.Noeud} {e.Evenement} {e.Transition} ({e.Acteur})");
+```
+
+La liste couvre tout l'arbre de la clé de corrélation, sous-processus compris, dans l'ordre des événements. `Evenement` vaut `ENTREE`, `SORTIE` ou `ANNULATION` ; `Transition` porte la branche, le signal ou la transition empruntée à la sortie, `echeance` pour une escalade et `repositionnement` pour un repositionnement. La liste est vide si `HistoriqueActif` était à `false` ou si la clé est inconnue.
+
+### 9.5 Diagrammes Mermaid
 
 ```csharp
 foreach (var cle in suivi.ClesDefinitions)

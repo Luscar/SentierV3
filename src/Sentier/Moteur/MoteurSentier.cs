@@ -8,6 +8,9 @@ public sealed class MoteurSentier : IMoteurSentier
     /// <summary>Transition consignée dans l'historique quand un nœud est quitté par son échéance d'escalade.</summary>
     public const string TransitionEcheance = "echeance";
 
+    /// <summary>Transition consignée dans l'historique quand un nœud est quitté par un repositionnement.</summary>
+    public const string TransitionRepositionnement = "repositionnement";
+
     private static readonly ResultatSollicitation NonTraitee = new(false, null);
 
     private readonly RegistreDefinitions _registre;
@@ -200,6 +203,25 @@ public sealed class MoteurSentier : IMoteurSentier
 
         var enCours = await _depot.ChargerEnCoursAsync(cleCorrelation, cancellationToken);
         return Etat(tete, enCours.FirstOrDefault(i => i.Attente != TypeAttente.SousProcessus) ?? tete);
+    }
+
+    /// <summary>Opération de support, exposée par <see cref="ISuiviSentier.RepositionnerAsync"/>.</summary>
+    internal async Task<EtatInstance> RepositionnerAsync(string cleCorrelation, string noeud, string acteur, Donnees? donnees,
+        CancellationToken ct)
+    {
+        // L'instance active est celle qui porte le nœud en attente : la feuille de l'arbre.
+        var instance = (await _depot.ChargerEnCoursAsync(cleCorrelation, ct)).FirstOrDefault(i => i.Attente != TypeAttente.SousProcessus)
+            ?? throw new SentierException($"Aucune instance en cours pour la clé de corrélation « {cleCorrelation} ».");
+        var cible = _registre.Obtenir(instance.CleDefinition).Noeud(noeud);
+
+        var appel = new Appel(acteur, false, _options.NombreMaxEtapes, ct);
+        if (instance.RefTache is { } refTache) await _bassin.AnnulerTacheAsync(refTache, acteur, ct);
+        // Le nœud quitté peut ne plus exister dans la définition : on le consigne tel qu'il est en base.
+        await HistoriserAsync(appel, instance, instance.NoeudCourant, "SORTIE", TransitionRepositionnement);
+        instance.CesserAttente();
+        instance.Variables.Appliquer(donnees);
+        await PoursuivreAsync(appel, instance, cible.Id);
+        return await EtatAsync(appel);
     }
 
     /// <summary>Exécute les nœuds de l'instance à partir de <paramref name="depart"/>, jusqu'à une attente ou une fin.</summary>

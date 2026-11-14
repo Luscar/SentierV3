@@ -31,9 +31,13 @@ public sealed class Banc : IDisposable
         => new(new RegistreDefinitions(definitions), Bd, new Resolveur(this), Bassin, [Ecouteur], Options, Horloge);
 
     public SuiviSentier CreerSuivi(params IDefinitionProcessus[] definitions)
-        => new(new RegistreDefinitions(definitions.Length == 0
+    {
+        var registre = new RegistreDefinitions(definitions.Length == 0
             ? [new DeclarationOriginale(), new Identification(), new Comptabilisation()]
-            : definitions), Bd, Options, Horloge);
+            : definitions);
+        var moteur = new MoteurSentier(registre, Bd, new Resolveur(this), Bassin, [Ecouteur], Options, Horloge);
+        return new SuiviSentier(registre, Bd, Options, moteur, Horloge);
+    }
 
     public DemandeDemarrage Demande(string cle = "cle-1", decimal montant = 5000m) => new("DeclOrign", 42, cle, "alice")
     {

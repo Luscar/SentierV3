@@ -111,6 +111,75 @@ public class SuiviTests
         Assert.DoesNotContain("subgraph i1", diagramme);
     }
 
+    [Fact]
+    public async Task Repositionnement_d_une_instance()
+    {
+        using var banc = new Banc();
+        var suivi = banc.CreerSuivi();
+        var etat = await banc.Moteur.DemarrerAsync(banc.Demande());
+        var tache = etat.RefTache!.Value;
+        banc.Journal.Lignes.Clear();
+
+        // Vers un point d'attente plus loin : la tâche ouverte est annulée, sans action « après ».
+        etat = await suivi.RepositionnerAsync("cle-1", "attente-paiement", "support");
+        Assert.Equal("attente-paiement", etat.NoeudCourant);
+        Assert.Equal(TypeAttente.Signal, etat.TypeAttente);
+        Assert.Null(etat.RefTache);
+        Assert.Equal([tache], banc.Bassin.Annulees);
+        Assert.Empty(banc.Journal.Lignes);
+        await Assert.ThrowsAsync<TacheIntrouvableException>(() => banc.Moteur.CompleterTacheAsync(tache, "bob"));
+
+        // Vers un nœud systémique : l'exécution reprend de là, jusqu'au prochain point d'attente.
+        etat = await suivi.RepositionnerAsync("cle-1", "valider", "support",
+            new Donnees().Avec(DeclarationOriginale.Montant, 10m)); // variable corrigée : la décision saute la vérification
+        Assert.Equal("comptabiliser", etat.NoeudCourant);
+        Assert.Equal("Compta", etat.CleDefinitionActive);
+        Assert.Equal("valider:42:support", banc.Journal.Lignes[0]);
+
+        // L'instance active est le sous-processus : le nœud visé est cherché dans sa définition.
+        await Assert.ThrowsAsync<NoeudInconnuException>(() => suivi.RepositionnerAsync("cle-1", "valider", "support"));
+        etat = await suivi.RepositionnerAsync("cle-1", "comptabilisee", "support");
+        Assert.Equal("attente-paiement", etat.NoeudCourant); // l'enfant terminé, le parent a repris
+
+        await Assert.ThrowsAsync<SentierException>(() => suivi.RepositionnerAsync("absente", "valider", "support"));
+        await banc.Moteur.AnnulerAsync("cle-1", "chef");
+        await Assert.ThrowsAsync<SentierException>(() => suivi.RepositionnerAsync("cle-1", "valider", "support"));
+    }
+
+    [Fact]
+    public async Task Repositionnement_d_une_instance_orpheline()
+    {
+        using var banc = new Banc();
+        await banc.Moteur.DemarrerAsync(banc.Demande());
+
+        // Le nœud « verification » n'existe plus et n'a pas de correspondance : le support replace l'instance.
+        var suivi = banc.CreerSuivi([new MoteurTests.Renommee(false), .. SousProcessus]);
+        Assert.Single(await suivi.VerifierInstancesAsync());
+        var etat = await suivi.RepositionnerAsync("cle-1", "controle", "support");
+        Assert.Equal("controle", etat.NoeudCourant);
+        Assert.Empty(await suivi.VerifierInstancesAsync());
+    }
+
+    [Fact]
+    public async Task Lecture_de_l_historique()
+    {
+        using var banc = new Banc();
+        var suivi = banc.CreerSuivi();
+        Assert.Empty(await suivi.LireHistoriqueAsync("x"));
+
+        await banc.Moteur.DemarrerAsync(banc.Demande("x", 10m)); // arrêtée dans le sous-processus « Compta »
+        await suivi.RepositionnerAsync("x", "comptabilisee", "support");
+        await banc.Moteur.AnnulerAsync("x", "chef");
+
+        var historique = await suivi.LireHistoriqueAsync("x");
+        Assert.Equal(new EvenementHistorique(1, "DeclOrign", "valider", "ENTREE", null, "alice", banc.Horloge.Maintenant.DateTime), historique[0]);
+        Assert.Equal(["DeclOrign", "Identif", "Compta"], historique.Select(e => e.CleDefinition).Distinct());
+        Assert.Contains(historique, e => e is { Noeud: "a-verifier", Evenement: "SORTIE", Transition: "False" });
+        Assert.Contains(historique, e => e is { Noeud: "comptabiliser", Evenement: "SORTIE", Transition: "repositionnement", Acteur: "support" });
+        Assert.Equal(new { Noeud = "attente-paiement", Evenement = "ANNULATION", Acteur = (string?)"chef" },
+            historique.Select(e => new { e.Noeud, e.Evenement, e.Acteur }).Last());
+    }
+
     /// <summary>La tâche « verification » est remplacée par une attente de signal : la correspondance ne peut pas s'appliquer.</summary>
     private sealed class AutreNature : IDefinitionProcessus
     {

@@ -145,6 +145,17 @@ internal sealed class Depot(IAccesBDSentier bd, NomsSentier noms, TimeProvider h
 
     private static string FiltreAttente(LigneArret arret) => arret.TypeAttente is null ? "TYPE_ATTENTE IS NULL AND :TypeAttente IS NULL" : "TYPE_ATTENTE = :TypeAttente";
 
+    /// <summary>Historique de tout l'arbre d'une clé de corrélation, dans l'ordre des événements.</summary>
+    public async Task<List<LigneHistorique>> HistoriqueAsync(string cleCorrelation, CancellationToken ct)
+        => (await bd.QueryAsync<LigneHistorique>($"""
+            SELECT H.ID_INSTANCE AS IdInstance, I.CLE_DEFINITION AS CleDefinition, H.NOEUD AS Noeud, H.EVENEMENT AS Evenement,
+                   H.TRANSITION AS Transition, H.ACTEUR AS Acteur, H.DATE_EVENEMENT AS DateEvenement
+              FROM {noms.TableHistorique} H
+              JOIN {noms.TableInstance} I ON I.ID_INSTANCE = H.ID_INSTANCE
+             WHERE I.CLE_CORRELATION = :CleCorrelation
+             ORDER BY H.ID_HISTORIQUE
+            """, new { CleCorrelation = cleCorrelation }, ct)).ToList();
+
     public async Task<IReadOnlySet<string>> NoeudsVisitesAsync(long idInstance, CancellationToken ct)
         => (await bd.QueryAsync<string>(
             $"SELECT DISTINCT NOEUD FROM {noms.TableHistorique} WHERE ID_INSTANCE = :IdInstance", new { IdInstance = idInstance }, ct))
