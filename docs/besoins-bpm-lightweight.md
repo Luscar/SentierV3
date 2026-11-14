@@ -41,9 +41,9 @@ public class DeclarationOriginale : IDefinitionProcessus
 {
     public void Definir(IProcessusBuilder p) => p
         .Systeme<ValiderDeclaration>("valider")                       // sans paramètre : l'id d'affaires suffit
-        .Systeme("notifier", c => new EnvoyerAvis(                    // avec paramètres
-            modele: "AVIS_RECEPTION",                                 //   valeur statique
-            langue: c.Variable<string>("langue")))                    //   variable de l'instance
+        .Systeme<EnvoyerAvis>("notifier", p => p                      // avec paramètres
+            .Valeur("modele", "AVIS_RECEPTION")                       //   valeur statique
+            .Variable("langue"))                                      //   variable de l'instance, sous son nom
         .SousProcessus("identification", TypeProcessus.IDENTIFICATION)
         .Decision<DoitEtreVerifiee>("a-verifier", d => d
             .Si(true, "verification")
@@ -99,8 +99,24 @@ Le moteur ne connaît que des interfaces ; le client fournit les implémentation
   - d'une valeur statique ;
   - d'une variable de l'instance.
 - **B-ABS-10** **Contexte toujours transmis.** Chaque handler reçoit, en plus des paramètres, un contexte fourni par le moteur. L'identifiant d'affaires y figure toujours ; s'y ajoutent la clé de corrélation, l'acteur, le type de processus et l'accès aux variables. Une commande qui n'a besoin que de l'identifiant d'affaires ne déclare donc aucun paramètre.
-- **B-ABS-11** **[Proposition]** Les paramètres sont les propriétés d'un objet commande ou requête typé, construit dans la définition à partir du contexte (voir l'esquisse de la section 3). Le compilateur vérifie ainsi les noms et les types des paramètres, et la définition reste lisible.
-- **B-ABS-8** Les handlers sont typés et asynchrones, sur des interfaces définies par le package (du genre `ICommandHandler<TCommande>` et `IQueryHandler<TRequete, TResultat>`). Le package ne dépend pas de MediatR, pour rester utilisable par d'autres applications ; un client qui le souhaite peut écrire un handler qui relaie vers MediatR.
+- **B-ABS-11** Décision : les paramètres s'appliquent comme dans Sentier V2, sans modèle. Il n'y a ni objet commande ni objet requête à écrire : chaque appel déclare ses paramètres nommés dans un petit bloc de la définition (voir l'esquisse de la section 3), et le handler les lit par leur nom dans le contexte, avec conversion vers le type demandé.
+  - Formes offertes dans la définition : `Valeur("nom", valeur)` (statique), `Variable("variable")` (sous son nom), `Variable("nom", "variable")` (sous un autre nom), `Variables("v1", "v2", …)`, `VariableOptionnelle("variable"[, défaut])`.
+  - Lecture dans le handler : `contexte.Parametre<T>("nom")`, et une variante avec valeur par défaut pour un paramètre facultatif.
+  - Un paramètre obligatoire absent, ou d'un type non convertible, lève une erreur qui nomme le nœud, la commande et le paramètre.
+  - Non repris de V2 : la liaison des paramètres aux propriétés d'une classe (`CommandeSentier<TParametres>`), qui réintroduit un modèle, et le paramètre « clé d'affaire », inutile puisque l'identifiant d'affaires est toujours dans le contexte (B-ABS-10).
+  - Conséquence acceptée : les noms de paramètres sont des chaînes, non vérifiées par le compilateur.
+- **B-ABS-8** La classe désignée dans la définition est le handler lui-même : elle implémente une interface asynchrone du package (du genre `ICommande`, et `IRequete<TResultat>` pour une décision), reçoit le contexte et peut injecter ses propres services. Le package ne dépend pas de MediatR, pour rester utilisable par d'autres applications ; un client qui le souhaite peut écrire un handler qui relaie vers MediatR.
+
+Esquisse d'un handler, à titre indicatif seulement :
+
+```csharp
+public class EnvoyerAvis(IServiceAvis avis) : ICommande
+{
+    public Task ExecuterAsync(ContexteCommande c, CancellationToken ct)
+        => avis.EnvoyerAsync(c.IdAffaire, c.Parametre<string>("modele"), c.Parametre<string>("langue"), ct);
+}
+```
+
 - **B-ABS-5** **Échéances** : le moteur n'a ni minuterie ni fil d'arrière-plan. Il enregistre la date d'échéance avec l'instance ; c'est un composant externe au package qui réveille le moteur par l'interface de service (B-API-4).
 - **B-ABS-6** **[Proposition]** **Signalement des autres événements du cycle de vie** (instance démarrée, nœud entré/sorti, instance suspendue), utile pour l'audit et le suivi sans alourdir le moteur.
 - **B-ABS-7** **Injection de dépendances** : l'application cliente utilise Autofac. Elle ouvre un scope et appelle le moteur à travers une couche de service enregistrée dans ses propres injections. L'enregistrement du package doit tenir en une ligne.
