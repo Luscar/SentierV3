@@ -40,7 +40,10 @@ Esquisse d'API, à titre indicatif seulement :
 public class DeclarationOriginale : IDefinitionProcessus
 {
     public void Definir(IProcessusBuilder p) => p
-        .Systeme<ValiderDeclaration>("valider")
+        .Systeme<ValiderDeclaration>("valider")                       // sans paramètre : l'id d'affaires suffit
+        .Systeme("notifier", c => new EnvoyerAvis(                    // avec paramètres
+            modele: "AVIS_RECEPTION",                                 //   valeur statique
+            langue: c.Variable<string>("langue")))                    //   variable de l'instance
         .SousProcessus("identification", TypeProcessus.IDENTIFICATION)
         .Decision<DoitEtreVerifiee>("a-verifier", d => d
             .Si(true, "verification")
@@ -92,6 +95,11 @@ Le moteur ne connaît que des interfaces ; le client fournit les implémentation
 - **B-ABS-2** **Signalement de fin de processus** : le client est avisé quand une instance se termine (complétée, annulée), dans la même transaction.
 - **B-ABS-3** **Commandes** : les nœuds systémiques et les actions pré/post lancent des commandes traitées par des handlers implémentés côté client.
 - **B-ABS-4** **Requêtes** : les nœuds décisionnels s'appuient sur des requêtes traitées côté client.
+- **B-ABS-9** **Paramètres des commandes et des requêtes.** Une commande ou une requête peut recevoir des paramètres, fixés dans la définition, provenant :
+  - d'une valeur statique ;
+  - d'une variable de l'instance.
+- **B-ABS-10** **Contexte toujours transmis.** Chaque handler reçoit, en plus des paramètres, un contexte fourni par le moteur. L'identifiant d'affaires y figure toujours ; s'y ajoutent la clé de corrélation, l'acteur, le type de processus et l'accès aux variables. Une commande qui n'a besoin que de l'identifiant d'affaires ne déclare donc aucun paramètre.
+- **B-ABS-11** **[Proposition]** Les paramètres sont les propriétés d'un objet commande ou requête typé, construit dans la définition à partir du contexte (voir l'esquisse de la section 3). Le compilateur vérifie ainsi les noms et les types des paramètres, et la définition reste lisible.
 - **B-ABS-8** Les handlers sont typés et asynchrones, sur des interfaces définies par le package (du genre `ICommandHandler<TCommande>` et `IQueryHandler<TRequete, TResultat>`). Le package ne dépend pas de MediatR, pour rester utilisable par d'autres applications ; un client qui le souhaite peut écrire un handler qui relaie vers MediatR.
 - **B-ABS-5** **Échéances** : le moteur n'a ni minuterie ni fil d'arrière-plan. Il enregistre la date d'échéance avec l'instance ; c'est un composant externe au package qui réveille le moteur par l'interface de service (B-API-4).
 - **B-ABS-6** **[Proposition]** **Signalement des autres événements du cycle de vie** (instance démarrée, nœud entré/sorti, instance suspendue), utile pour l'audit et le suivi sans alourdir le moteur.
@@ -104,7 +112,7 @@ Le moteur ne connaît que des interfaces ; le client fournit les implémentation
 
 Le moteur obtient la `DbConnection` du client (B-TX-1) ; ses opérations sont exposées par une interface de service.
 
-- **B-API-1** Démarrer une instance : définition, clé de corrélation fournie par le client, données initiales, acteur.
+- **B-API-1** Démarrer une instance : définition, identifiant d'affaires, clé de corrélation fournie par le client, variables initiales, acteur.
 - **B-API-2** Compléter une tâche interactive, avec le nom de la transition choisie et des données.
 - **B-API-3** Envoyer un signal, de deux façons :
   - **ciblé** : à l'instance désignée par une clé de corrélation ;
@@ -121,6 +129,7 @@ Le moteur obtient la `DbConnection` du client (B-TX-1) ; ses opérations sont ex
 
 - **B-ET-1** Chaque instance porte des variables : fournies au démarrage, alimentées par le contenu des complétions de tâche et des signaux, lisibles par les commandes et les requêtes, modifiables par les commandes. Elles peuvent orienter un nœud décisionnel (B-N-8).
 - **B-ET-2** Clé de corrélation sur l'instance : valeur opaque fournie par le client au démarrage, unique, sans signification d'affaires pour le moteur. Les sous-processus héritent de la clé de leur processus de tête.
+- **B-ET-7** Identifiant d'affaires sur l'instance : un `long` fourni au démarrage, conservé par le moteur sans qu'il en connaisse le sens, hérité par les sous-processus et remis à chaque handler (B-ABS-10).
 - **B-ET-6** Un seul nœud actif par arbre d'instances (processus de tête et sous-processus) : pas de parallélisme. Un signal ciblé par clé de corrélation atteint donc sans ambiguïté le nœud en attente, qu'il soit dans le processus de tête ou dans un sous-processus.
 - **B-ET-3** **[Proposition]** Accès concurrent : deux appels simultanés sur la même instance ne doivent pas la corrompre (verrou de ligne ou numéro de version optimiste).
 - **B-ET-4** **[Proposition]** Idempotence : compléter deux fois la même tâche ou recevoir deux fois la même échéance ne fait pas avancer l'instance deux fois.
@@ -142,6 +151,7 @@ Table **INSTANCE** — une ligne par instance (processus de tête ou sous-proces
 | Colonne (provisoire) | Type logique | Rôle |
 |---|---|---|
 | ID_INSTANCE | Nombre (`long`) | Identifiant, alimenté par séquence |
+| ID_AFFAIRE | Nombre (`long`) | Identifiant d'affaires fourni au démarrage ; hérité par les sous-processus |
 | CLE_CORRELATION | Texte | Clé fournie par le client ; héritée par les sous-processus |
 | CLE_DEFINITION | Texte | Définition exécutée |
 | ID_INSTANCE_PARENT | Nombre, nul | Instance appelante, pour un sous-processus |
@@ -216,7 +226,7 @@ Trois problèmes de fond :
 
 ### 9.2 Principe retenu
 
-- **B-COH-1** Le package NuGet ne contient **aucun** concept d'affaires : ni déclaration, ni période, ni formulaire, ni énumération du client. `IServiceProcessusAffaires` reste côté client, comme façade d'affaires.
+- **B-COH-1** Le package NuGet ne contient **aucun** concept d'affaires : ni déclaration, ni période, ni formulaire, ni énumération du client. Il transporte un identifiant d'affaires (B-ET-7) sans l'interpréter. `IServiceProcessusAffaires` reste côté client, comme façade d'affaires.
 - **B-COH-2** Une implémentation de `IServiceProcessusAffaires` par moteur (RHPAM, nouveau moteur), plus une implémentation d'aiguillage qui délègue à la bonne selon le catalogue et la table de corrélation. Les appelants actuels (une cinquantaine de références) ne changent pas.
 - **B-COH-17** Signal diffusé : chaque implémentation le traite pour son propre moteur ; l'implémentation d'aiguillage peut l'envoyer aux deux si le besoin se présente.
 - **B-COH-3** Aiguillage en deux temps, entièrement côté client. Le catalogue associe une catégorie de processus, plus un critère facultatif (le type de formulaire), à un `TypeProcessus`. Le `TypeProcessus` porte ensuite son mode de traitement, c'est-à-dire son moteur. Aujourd'hui tous les types sont en mode RHPAM ; basculer un type revient à changer ce mode.
