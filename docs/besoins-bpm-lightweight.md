@@ -10,9 +10,11 @@ Principe directeur : à chaque sollicitation (démarrage, fin de tâche, signal,
 
 ## 2. Transaction
 
-- **B-TX-1** Le client fournit au moteur une `IDbConnection` déjà ouverte : c'est la seule poignée dont il dispose. Il n'y a pas d'objet transaction à passer ; la transaction est celle que le client a ouverte sur cette connexion (sa couche d'accès aux données, au-dessus de Dapper, passe `null` comme transaction aux commandes).
-- **B-TX-2** Le moteur n'ouvre et ne ferme jamais la connexion, et ne démarre, ne valide ni n'annule de transaction. Tout cela appartient au client.
-- **B-TX-8** Le moteur exécute toutes ses écritures sur cette connexion, de la même façon que la couche du client (commandes sans objet transaction). La garantie « tout ou rien » repose donc sur la transaction du client : s'il n'y en a pas d'ouverte, il n'y a pas de garantie.
+- **B-TX-1** Le client fournit au moteur une `DbConnection` déjà ouverte : c'est la seule poignée d'infrastructure reçue. Il n'y a pas d'objet transaction à passer.
+- **B-TX-2** La transaction est ambiante : l'API du client ouvre un `TransactionScope`, et la connexion y participe. Le moteur n'ouvre et ne ferme jamais la connexion, ne crée pas de `TransactionScope` et ne valide ni n'annule rien.
+- **B-TX-8** Le moteur exécute ses commandes sur cette connexion sans objet transaction, comme la couche d'accès du client (au-dessus de Dapper). La garantie « tout ou rien » repose sur le `TransactionScope` du client.
+- **B-TX-9** Le moteur étant asynchrone, le `TransactionScope` du client doit être créé avec le flux asynchrone activé (`TransactionScopeAsyncFlowOption.Enabled`). À documenter comme prérequis.
+- **B-TX-10** **[À vérifier]** Tous les fournisseurs ne participent pas à un `TransactionScope` ; il faut confirmer par un test que le fournisseur SQLite utilisé en test le fait. Sinon, les tests ne valideront pas l'annulation en cas d'erreur, même si Oracle la garantit en production.
 - **B-TX-3** Toutes les étapes exécutées lors d'un même appel (nœuds systémiques, décisions, création de tâches, changements d'état du moteur) partagent cette transaction : tout passe ou rien ne passe.
 - **B-TX-4** Les handlers du client travaillent sur la même connexion, obtenue du scope courant ; le moteur n'a rien à leur transmettre.
 - **B-TX-5** **[Proposition]** En cas d'exception dans un handler, le moteur ne rattrape rien et ne fait aucune reprise : l'exception remonte et le client annule la transaction. L'instance reste donc dans son dernier état validé.
@@ -88,7 +90,7 @@ Le moteur ne connaît que des interfaces ; le client fournit les implémentation
 
 ## 6. Points d'entrée du moteur
 
-Le moteur obtient la `IDbConnection` du client (B-TX-1) ; ses opérations sont exposées par une interface de service.
+Le moteur obtient la `DbConnection` du client (B-TX-1) ; ses opérations sont exposées par une interface de service.
 
 - **B-API-1** Démarrer une instance : définition, clé de corrélation fournie par le client, données initiales, acteur.
 - **B-API-2** Compléter une tâche interactive, avec le nom de la transition choisie et des données.
@@ -115,7 +117,7 @@ Le moteur obtient la `IDbConnection` du client (B-TX-1) ; ses opérations sont e
 - **B-PER-1** Le package conserve lui-même l'état des instances, dans ses propres tables, à travers la connexion du client.
 - **B-PER-2** Bases visées : Oracle en production, SQLite pour les tests. Le SQL du package doit fonctionner sur les deux.
 - **B-PER-3** Nom des tables : `{PRÉFIXE}_{nom}_{SUFFIXE}`, le préfixe et le suffixe étant fournis à l'enregistrement du package (exemple de la convention du client : `AT_DECLA_TAXE`).
-- **B-PER-4** Les noms de tables et de colonnes ci-dessous sont provisoires ; ils seront révisés par le client pour respecter les mnémoniques de son environnement.
+- **B-PER-4** Les noms de tables et de colonnes ci-dessous sont provisoires ; ils seront révisés par le client pour respecter les mnémoniques de son environnement, puis fixés dans le package. La seule configuration est le préfixe et le suffixe passés à l'enregistrement.
 - **B-PER-5** **[Proposition]** Pour rester portable entre Oracle et SQLite : identifiants générés par le package (pas de séquence ni d'auto-incrément), contrôle de concurrence par numéro de version (pas de verrou de ligne), données d'instance en JSON dans une colonne texte.
 - **B-PER-6** **[Proposition]** Le package fournit les scripts de création des tables pour Oracle ; il n'exécute aucune migration de schéma lui-même.
 
@@ -245,8 +247,7 @@ Décision : le client génère une clé de corrélation au démarrage d'un proce
 
 ## 11. Questions ouvertes
 
-1. **Délimitation de la transaction.** Qui ouvre et valide la transaction sur la connexion aujourd'hui (la couche d'accès aux données à l'ouverture du scope, un `TransactionScope`, autre) ? Le « tout ou rien » du moteur en dépend entièrement (B-TX-8).
-2. **Accès asynchrone.** `IDbConnection` n'offre que des opérations synchrones. Le package peut-il utiliser les opérations asynchrones quand la connexion reçue est une `DbConnection` (c'est le cas d'Oracle et de SQLite), ou doit-il passer par la couche d'accès du client ?
-3. **Noms de colonnes.** Une fois révisés, sont-ils fixés dans le package, ou doivent-ils rester configurables pour d'autres applications ?
-4. **Signal diffusé et transaction.** Il fait avancer plusieurs instances dans la même transaction : acceptable ? (Supposé oui pour l'instant.)
-5. **Catalogue et implémentations.** À compléter après examen des photos (catalogue de catégories, classes du client).
+1. **Portée du préfixe et du suffixe.** Ils s'appliquent aux noms de tables (B-PER-3). S'appliquent-ils aussi aux noms de colonnes dans la convention du client ?
+2. **Catalogue et implémentations.** À compléter après examen des photos (catalogue de catégories, classes du client).
+
+Hypothèse retenue : un signal diffusé fait avancer plusieurs instances dans la même transaction (cas rare, jugé acceptable).
