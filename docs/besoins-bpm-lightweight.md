@@ -193,7 +193,7 @@ Table **INSTC_PROCS** — une ligne par instance (processus de tête ou sous-pro
 | TYP_ATTEN | Texte court, nul | Tâche, signal, temps, sous-processus |
 | REF_TACHE | Nombre, nul | Identifiant de la tâche dans le bassin, pour un nœud interactif |
 | DAT_ECHNC | Date-heure, nul | Échéance d'une attente de temps ou d'une escalade |
-| GROUPE_SIGNAL | Texte, nul | Groupe de corrélation auquel l'instance est abonnée pendant son attente de signal (B-N-10) |
+| CLE_GROUP_CORREL_SIGNL | Texte, nul | Groupe de corrélation auquel l'instance est abonnée pendant son attente de signal (B-N-10) |
 | VAR_JSON | Texte long (CLOB) | Variables de l'instance, en JSON |
 | NO_VERSI | Nombre | Contrôle de concurrence optimiste |
 | LOGON_CREA | Texte | Acteur qui a démarré l'instance |
@@ -227,7 +227,7 @@ Autres objets de la base. Le préfixe et le suffixe s'appliquent aux tables et a
 | Index | `IX_02_{table INSTC_PROCS}` | `CLE_CORREL` |
 | Index | `IX_03_{table INSTC_PROCS}` | `REF_TACHE` |
 | Index | `IX_04_{table INSTC_PROCS}` | `TE_SEQ_INSTC_PROCS`, `TYP_ATTEN`, `DAT_ECHNC` |
-| Index | `IX_05_{table INSTC_PROCS}` | `GROUPE_SIGNAL` |
+| Index | `IX_05_{table INSTC_PROCS}` | `CLE_GROUP_CORREL_SIGNL` |
 | Index | `IX_01_{table HIST_INSTC_PROCS}` | `NO_SEQ_INSTC_PROCS` |
 
 Sous SQLite, chaque séquence est une table à auto-incrément du même nom, avec une colonne `ID`.

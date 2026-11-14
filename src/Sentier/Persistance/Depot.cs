@@ -7,7 +7,7 @@ internal sealed class Depot(IAccesBDSentier bd, NomsSentier noms, TimeProvider h
         SELECT NO_SEQ_INSTC_PROCS AS IdInstance, ID_AFFA AS IdAffaire, CLE_CORREL AS CleCorrelation,
                CLE_DEFIN AS CleDefinition, NO_SEQ_PARN_INSTC_PROCS AS IdInstanceParent, ID_NOEUD_COUR AS NoeudCourant,
                TE_SEQ_INSTC_PROCS AS Statut, NOM_FIN AS NomFin, TYP_ATTEN AS TypeAttente, REF_TACHE AS RefTache,
-               DAT_ECHNC AS DateEcheance, GROUPE_SIGNAL AS GroupeSignal, VAR_JSON AS Donnees, NO_VERSI AS NoVersion,
+               DAT_ECHNC AS DateEcheance, CLE_GROUP_CORREL_SIGNL AS GroupeSignal, VAR_JSON AS Donnees, NO_VERSI AS NoVersion,
                LOGON_CREA AS ActeurDemarrage, DH_CREA AS DateDemarrage, DH_FIN AS DateFin
           FROM {noms.TableInstance}
         """;
@@ -21,7 +21,7 @@ internal sealed class Depot(IAccesBDSentier bd, NomsSentier noms, TimeProvider h
         await bd.ExecuteNonQueryAsync($"""
             INSERT INTO {noms.TableInstance}
                 (NO_SEQ_INSTC_PROCS, ID_AFFA, CLE_CORREL, CLE_DEFIN, NO_SEQ_PARN_INSTC_PROCS, ID_NOEUD_COUR, TE_SEQ_INSTC_PROCS,
-                 NOM_FIN, TYP_ATTEN, REF_TACHE, DAT_ECHNC, GROUPE_SIGNAL, VAR_JSON, NO_VERSI, LOGON_CREA,
+                 NOM_FIN, TYP_ATTEN, REF_TACHE, DAT_ECHNC, CLE_GROUP_CORREL_SIGNL, VAR_JSON, NO_VERSI, LOGON_CREA,
                  DH_CREA, DH_MODIF, DH_FIN)
             VALUES
                 (:IdInstance, :IdAffaire, :CleCorrelation, :CleDefinition, :IdInstanceParent, :NoeudCourant, :Statut,
@@ -57,7 +57,7 @@ internal sealed class Depot(IAccesBDSentier bd, NomsSentier noms, TimeProvider h
         var lignes = await bd.ExecuteNonQueryAsync($"""
             UPDATE {noms.TableInstance}
                SET ID_NOEUD_COUR = :NoeudCourant, TE_SEQ_INSTC_PROCS = :Statut, NOM_FIN = :NomFin, TYP_ATTEN = :TypeAttente,
-                   REF_TACHE = :RefTache, DAT_ECHNC = :DateEcheance, GROUPE_SIGNAL = :GroupeSignal, VAR_JSON = :Donnees,
+                   REF_TACHE = :RefTache, DAT_ECHNC = :DateEcheance, CLE_GROUP_CORREL_SIGNL = :GroupeSignal, VAR_JSON = :Donnees,
                    NO_VERSI = NO_VERSI + 1, DH_MODIF = :DateModification, DH_FIN = :DateFin
              WHERE NO_SEQ_INSTC_PROCS = :IdInstance AND NO_VERSI = :NoVersion
             """,
@@ -111,7 +111,7 @@ internal sealed class Depot(IAccesBDSentier bd, NomsSentier noms, TimeProvider h
     /// <summary>Instances abonnées au groupe de corrélation : seules celles-là sont lues.</summary>
     public async Task<List<Instance>> AbonneesAuGroupeAsync(string groupe, CancellationToken ct)
         => Vers(await bd.QueryAsync<LigneInstance>(
-            $"{Selection} WHERE GROUPE_SIGNAL = :GroupeSignal AND TE_SEQ_INSTC_PROCS = 'EN_COURS' AND TYP_ATTEN = 'SIGNAL' ORDER BY NO_SEQ_INSTC_PROCS",
+            $"{Selection} WHERE CLE_GROUP_CORREL_SIGNL = :GroupeSignal AND TE_SEQ_INSTC_PROCS = 'EN_COURS' AND TYP_ATTEN = 'SIGNAL' ORDER BY NO_SEQ_INSTC_PROCS",
             new { GroupeSignal = groupe }, ct));
 
     /// <summary>Attentes de temps et escalades dues. Le filtre sur le type d'attente suit l'index (TE_SEQ_INSTC_PROCS, TYP_ATTEN, DAT_ECHNC).</summary>
