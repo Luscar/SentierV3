@@ -1,4 +1,4 @@
-using System.Data.Common;
+using System.Data;
 using System.Text.RegularExpressions;
 using Dapper;
 
@@ -7,8 +7,10 @@ namespace Sentier.Dapper;
 /// <summary>
 /// Accès aux données sur la connexion du client, déjà ouverte. Le moteur n'ouvre ni ne ferme la connexion et
 /// n'utilise aucun objet transaction : la connexion participe au TransactionScope du client.
+/// Les appels étant asynchrones, Dapper exige que les commandes créées par la connexion soient des DbCommand
+/// (c'est le cas d'Oracle et de SQLite).
 /// </summary>
-public sealed partial class AccesBDDapper(DbConnection connexion, DialecteSentier dialecte) : IAccesBDSentier
+public sealed partial class AccesBDDapper(IDbConnection connexion, DialecteSentier dialecte) : IAccesBDSentier
 {
     public Task<int> ExecuteNonQueryAsync(string requeteSQL, object? parametres = null, CancellationToken cancellationToken = default)
         => connexion.ExecuteAsync(new CommandDefinition(requeteSQL, parametres, cancellationToken: cancellationToken));
