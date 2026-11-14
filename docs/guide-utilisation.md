@@ -33,6 +33,8 @@ Le moteur est passif : il n'a ni fil d'arrière-plan, ni état statique, ni tran
 
 ## 2. Préparer l'application cliente
 
+Le détail du branchement (abstractions obligatoires et facultatives, enregistrement des handlers, sans Autofac) est dans [preparation-application-cliente.md](preparation-application-cliente.md).
+
 ### 2.1 Installer les packages
 
 | Package | Quand l'installer |
