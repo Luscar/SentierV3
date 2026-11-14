@@ -21,10 +21,23 @@ public interface IMoteurSentier
     Task<IReadOnlyList<EtatInstance>> DiffuserSignalAsync(string signal, string acteur, string? transition = null,
         Donnees? donnees = null, string? cleDefinition = null, CancellationToken cancellationToken = default);
 
-    /// <summary>Échéances dues à un instant donné ; un composant externe les déclenche une à une.</summary>
+    /// <summary>
+    /// Signal envoyé aux instances abonnées à un groupe de corrélation (nœud d'attente déclaré avec Groupe) ;
+    /// retourne l'état de celles qui ont avancé. Une instance qui n'attend pas ce signal est ignorée.
+    /// </summary>
+    Task<IReadOnlyList<EtatInstance>> SignalerGroupeAsync(string groupeCorrelation, string signal, string acteur,
+        string? transition = null, Donnees? donnees = null, string? cleDefinition = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Échéances dues à un instant donné : attentes de temps, et escalades de tâches ou d'attentes de signal.
+    /// Un composant externe les déclenche une à une.
+    /// </summary>
     Task<IReadOnlyList<Echeance>> ListerEcheancesDuesAsync(DateTime instant, CancellationToken cancellationToken = default);
 
-    /// <summary>Déclenche une échéance. Sans effet si elle n'est pas due ou a déjà été déclenchée.</summary>
+    /// <summary>
+    /// Déclenche une échéance. Sans effet si elle n'est pas due ou a déjà été déclenchée. Pour une escalade,
+    /// la tâche ouverte est annulée dans le bassin et l'instance va au nœud d'escalade.
+    /// </summary>
     Task<ResultatSollicitation> DeclencherEcheanceAsync(long idInstance, string acteur, CancellationToken cancellationToken = default);
 
     /// <summary>Annule l'arbre d'instances : tâches ouvertes dans le bassin, échéances et sous-processus.</summary>

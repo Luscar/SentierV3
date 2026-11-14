@@ -29,6 +29,7 @@ public static class SchemaSentier
                 TYPE_ATTENTE       {court},
                 REF_TACHE          {nombre},
                 DATE_ECHEANCE      {date},
+                GROUPE_SIGNAL      {texte},
                 DONNEES            {clob} NOT NULL,
                 NO_VERSION         {entier} NOT NULL,
                 ACTEUR_DEMARRAGE   {texte},
@@ -41,6 +42,7 @@ public static class SchemaSentier
             $"CREATE INDEX {noms.TableInstance}_I1 ON {noms.TableInstance} (CLE_CORRELATION)",
             $"CREATE INDEX {noms.TableInstance}_I2 ON {noms.TableInstance} (REF_TACHE)",
             $"CREATE INDEX {noms.TableInstance}_I3 ON {noms.TableInstance} (STATUT, TYPE_ATTENTE, DATE_ECHEANCE)",
+            $"CREATE INDEX {noms.TableInstance}_I4 ON {noms.TableInstance} (GROUPE_SIGNAL)",
             $"""
             CREATE TABLE {noms.TableHistorique} (
                 ID_HISTORIQUE  {nombre} NOT NULL,

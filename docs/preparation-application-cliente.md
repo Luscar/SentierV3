@@ -136,7 +136,7 @@ Le moteur lit l'heure locale de `TimeProvider` pour les dates de démarrage, de 
 
 ### 4.3 Déclencheur d'échéances
 
-Ce n'est pas une interface de Sentier, mais le moteur n'a pas de minuterie. Si une définition utilise `AttenteTemps`, l'application doit avoir un traitement planifié qui appelle `ListerEcheancesDuesAsync` puis `DeclencherEcheanceAsync` (guide, section 6.5). Sans lui, ces instances restent en attente.
+Ce n'est pas une interface de Sentier, mais le moteur n'a pas de minuterie. Si une définition utilise `AttenteTemps` ou une escalade (`Echeance` sur un nœud interactif ou une attente de signal), l'application doit avoir un traitement planifié qui appelle `ListerEcheancesDuesAsync` puis `DeclencherEcheanceAsync` (guide, section 6.5). Sans lui, ces instances restent en attente.
 
 ## 5. Enregistrement avec Autofac
 
@@ -278,6 +278,8 @@ foreach (var script in SchemaSentier.Creation(DialecteSentier.Oracle, options))
 
 Objets créés : `AT_INSTANCE_TAXE`, `AT_HISTORIQUE_TAXE`, et les séquences `AT_S_INSTANCE_TAXE` et `AT_S_HISTORIQUE_TAXE`. La table d'historique est créée même si `HistoriqueActif` est à `false`.
 
+Une base créée avec une version antérieure doit recevoir la colonne `GROUPE_SIGNAL` (texte de 200, nulle) et son index sur la table des instances.
+
 **Transaction.** Le moteur n'en gère aucune. Chaque appel se fait dans un `TransactionScope` ouvert par l'appelant, avec le flux asynchrone activé :
 
 ```csharp
@@ -312,5 +314,5 @@ Cet appel fait deux choses :
 - [ ] `ModuleSentier` enregistré avec toutes les assemblies de définitions, de handlers et d'écouteurs (ou enregistrement manuel de la section 6).
 - [ ] Dépendances des handlers enregistrées ; test de composition en place.
 - [ ] Chaque appel au moteur dans un `TransactionScope` avec `TransactionScopeAsyncFlowOption.Enabled`.
-- [ ] Traitement planifié des échéances, si une définition utilise `AttenteTemps`.
+- [ ] Traitement planifié des échéances, si une définition utilise `AttenteTemps` ou `Echeance`.
 - [ ] `VerifierInstancesAsync` appelé au démarrage.

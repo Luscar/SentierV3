@@ -34,7 +34,7 @@ internal sealed class ProcessusBuilder(string cle) : IProcessusBuilder
     public IProcessusBuilder Interactif(string id, string codeTache, Action<IInteractifBuilder>? tache = null)
     {
         var noeud = new NoeudInteractif(id, codeTache);
-        tache?.Invoke(new InteractifBuilder(this, noeud));
+        tache?.Invoke(new InteractifBuilder(this, noeud, _erreurs));
         return Ajouter(noeud);
     }
 
@@ -216,8 +216,27 @@ internal sealed class ProcessusBuilder(string cle) : IProcessusBuilder
         }
     }
 
-    private sealed class InteractifBuilder(ProcessusBuilder builder, NoeudInteractif noeud) : IInteractifBuilder
+    private static Escalade? Escalader(Noeud noeud, Escalade? actuelle, Escalade nouvelle, List<string> erreurs)
     {
+        if (actuelle is null) return nouvelle;
+        erreurs.Add($"Nœud « {noeud.Id} » : l'échéance est déclarée deux fois.");
+        return actuelle;
+    }
+
+    private sealed class InteractifBuilder(ProcessusBuilder builder, NoeudInteractif noeud, List<string> erreurs) : IInteractifBuilder
+    {
+        public IInteractifBuilder Echeance(TimeSpan duree, string cible)
+        {
+            noeud.Escalade = Escalader(noeud, noeud.Escalade, new Escalade(duree, null, cible), erreurs);
+            return this;
+        }
+
+        public IInteractifBuilder Echeance(Variable<DateTime> date, string cible)
+        {
+            noeud.Escalade = Escalader(noeud, noeud.Escalade, new Escalade(null, date, cible), erreurs);
+            return this;
+        }
+
         public IInteractifBuilder Avant<TCommande>(Action<IParametresBuilder>? parametres = null) where TCommande : ICommande
         {
             noeud.Avant = builder.Appel(typeof(TCommande), parametres, noeud.Id);
@@ -239,6 +258,33 @@ internal sealed class ProcessusBuilder(string cle) : IProcessusBuilder
 
     private sealed class AttenteSignalBuilder(NoeudAttenteSignal noeud, List<string> erreurs) : IAttenteSignalBuilder
     {
+        public IAttenteSignalBuilder Groupe(Variable<string> groupe) => Abonner(v => v.Lire(groupe));
+
+        public IAttenteSignalBuilder Groupe(string groupe)
+        {
+            if (string.IsNullOrWhiteSpace(groupe)) erreurs.Add($"Nœud « {noeud.Id} » : le groupe de corrélation est vide.");
+            return Abonner(_ => groupe);
+        }
+
+        private IAttenteSignalBuilder Abonner(Func<Variables, string?> groupe)
+        {
+            if (noeud.Groupe is not null) erreurs.Add($"Nœud « {noeud.Id} » : le groupe de corrélation est déclaré deux fois.");
+            noeud.Groupe = groupe;
+            return this;
+        }
+
+        public IAttenteSignalBuilder Echeance(TimeSpan duree, string cible)
+        {
+            noeud.Escalade = Escalader(noeud, noeud.Escalade, new Escalade(duree, null, cible), erreurs);
+            return this;
+        }
+
+        public IAttenteSignalBuilder Echeance(Variable<DateTime> date, string cible)
+        {
+            noeud.Escalade = Escalader(noeud, noeud.Escalade, new Escalade(null, date, cible), erreurs);
+            return this;
+        }
+
         public IAttenteSignalBuilder Signal(string signal, string cible)
         {
             if (!noeud.Signaux.TryAdd(signal, cible))

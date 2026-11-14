@@ -261,14 +261,52 @@ public sealed class Paiement : IDefinitionProcessus
 - `Avant<TCommande>()` s'exécute dans l'appel qui crée la tâche, juste avant sa création.
 - `Apres<TCommande>()` s'exécute dans l'appel qui complète la tâche.
 - `Sur(transition, noeud)` déclare une transition nommée. À la complétion, l'appelant choisit une transition ; sans transition, l'instance va au nœud suivant.
+- `Echeance(duree, noeud)` ou `Echeance(variableDate, noeud)` déclare une escalade (voir plus bas).
 
 **Attente d'un signal.**
 
 - Le signal donné à `AttenteSignal` mène au nœud suivant.
 - `Signal(autreSignal, noeud)` accepte un autre signal, qui mène à son propre nœud.
 - `Sur(transition, noeud)` déclare une transition que l'émetteur du signal peut nommer pour choisir la destination.
+- `Groupe(variable)` ou `Groupe("valeur")` abonne l'instance à un groupe de corrélation (voir plus bas).
+- `Echeance(duree, noeud)` ou `Echeance(variableDate, noeud)` déclare une escalade (voir plus bas).
 
-**Attente d'un délai.** L'échéance est calculée à l'arrivée sur le nœud. Avec une variable, celle-ci doit avoir été écrite avant : absente, elle vaut la date minimale et l'échéance est due tout de suite. Le moteur ne déclenche rien seul (section 6.4).
+**Groupe de corrélation.** Une attente de signal peut s'abonner à un groupe : un seul envoi au groupe atteint alors toutes les instances abonnées (section 6.4).
+
+```csharp
+public static readonly Variable<string> GroupeBlocage = Variable.Texte("groupeBlocage");
+
+.Systeme<TrouverBlocage>("trouver-blocage")                    // écrit GroupeBlocage
+.Decision<CotisationEstBloquee>("cotisation-bloquee", d => d
+    .Si(true, "attente-deblocage")
+    .Sinon("cotiser"))
+.AttenteSignal("attente-deblocage", "cotisation-debloquee", s => s
+    .Groupe(GroupeBlocage)
+    .Echeance(TimeSpan.FromDays(30), "cotisation-bloquee"))    // filet : revérifie le blocage
+.Systeme<Cotiser>("cotiser")
+```
+
+- L'instance s'abonne en arrivant sur le nœud et se désabonne en le quittant, quelle que soit la sortie (signal, échéance, annulation). Elle peut s'abonner à d'autres groupes à d'autres nœuds.
+- Avec une variable, celle-ci doit avoir été écrite avant l'arrivée sur le nœud : absente ou vide, le moteur lève `SentierException`.
+- Le groupe est une valeur opaque ; donnez-lui un nom qui dit ce qui est attendu, par exemple `BLOCAGE-COTISATION:employeur-123`.
+- Le signal ciblé par clé de corrélation atteint toujours ce nœud.
+- **Le moteur ne mémorise pas les signaux.** Une instance qui arrive sur l'attente pendant que le signal de groupe est envoyé peut le manquer : sa transaction a lu « bloquée », l'envoi ne la voit pas encore, et elle attend ensuite un signal qui ne reviendra pas. Sérialisez les deux dans le domaine : la requête qui précède l'attente lit la ligne du blocage avec `FOR UPDATE`, et le déblocage modifie cette même ligne dans la transaction qui envoie le signal. L'échéance de l'exemple est un filet, pas la correction.
+
+**Escalade.** `Echeance` sur un nœud interactif ou une attente de signal évite qu'une instance reste bloquée indéfiniment : le délai dépassé, l'instance va au nœud d'escalade.
+
+```csharp
+.Interactif("approbation", "APPROB", t => t
+    .Echeance(TimeSpan.FromDays(10), "relance-gestionnaire"))
+```
+
+- L'échéance est calculée à l'arrivée sur le nœud. Avec une variable, celle-ci doit avoir été écrite avant : absente, le moteur lève `SentierException`.
+- Rien ne se déclenche seul : c'est le traitement planifié des échéances qui fait avancer l'instance (section 6.5).
+- Pour un nœud interactif, la tâche ouverte est annulée dans le bassin (`AnnulerTacheAsync`) et la commande `Apres` n'est pas exécutée.
+- Un nœud quitté à temps n'a plus d'échéance.
+- Dans l'historique, la sortie par escalade porte la transition `echeance`.
+- Si une nouvelle version de la définition retire l'échéance du nœud, les instances déjà arrêtées dessus continuent d'attendre, sans échéance.
+
+**Attente d'un délai.** L'échéance est calculée à l'arrivée sur le nœud. Avec une variable, celle-ci doit avoir été écrite avant : absente, elle vaut la date minimale et l'échéance est due tout de suite. Le moteur ne déclenche rien seul (section 6.5).
 
 **Sous-processus.**
 
@@ -312,7 +350,7 @@ La définition est validée à la construction du registre. `DefinitionInvalideE
 - décision sans `Sinon`, ou valeur de `Si` d'un autre type que le résultat ;
 - nœud inatteignable, ou nœud qui n'aboutit à aucune fin ;
 - paramètre obligatoire d'une commande ou d'une requête non fourni ;
-- signal déclaré deux fois sur un même nœud ;
+- signal, groupe de corrélation ou échéance déclaré deux fois sur un même nœud ;
 - correspondance invalide ;
 - sous-processus inconnu, ou deux définitions de même clé.
 
@@ -460,7 +498,8 @@ Chaque appel retourne un `EtatInstance` ; `ObtenirEtatAsync(cleCorrelation)` le 
 | `IdInstanceActive`, `CleDefinitionActive` | L'instance qui porte le nœud actif : la tête ou un sous-processus. |
 | `NoeudCourant`, `TypeAttente` | Où l'instance est arrêtée, et sur quoi (`Tache`, `Signal`, `Temps`). |
 | `CodeTache`, `RefTache` | La tâche attendue. |
-| `DateEcheance` | L'échéance attendue. |
+| `DateEcheance` | L'échéance attendue : attente de temps, ou escalade d'une tâche ou d'une attente de signal. |
+| `GroupeSignal` | Le groupe de corrélation auquel l'instance est abonnée. |
 | `SignauxAttendus` | Les signaux acceptés par le nœud. |
 | `Variables` | Une copie des variables de l'instance active. |
 
@@ -490,11 +529,16 @@ if (!resultat.Traitee) { /* rien n'attendait ce signal */ }
 
 // à toutes les instances qui l'attendent
 var etats = await moteur.DiffuserSignalAsync("paiement-rejete", "systeme-bancaire", cancellationToken: ct);
+
+// aux instances abonnées à un groupe de corrélation
+var debloquees = await moteur.SignalerGroupeAsync("BLOCAGE-COTISATION:employeur-123", "cotisation-debloquee", "agent", cancellationToken: ct);
 ```
 
 - Un signal que rien n'attend n'est pas une erreur : `Traitee` vaut `false` et l'instance ne bouge pas. Le signal n'est pas mis en file ; il est perdu.
 - `cleDefinition` limite la remise aux instances de cette définition.
 - `transition` et `donnees` s'utilisent comme pour une tâche.
+- `SignalerGroupeAsync` ne lit que les instances abonnées au groupe, et retourne l'état de celles qui ont avancé. Une instance abonnée qui n'attend pas ce signal est ignorée.
+- Un signal diffusé ou de groupe fait avancer toutes les instances dans la transaction de l'appel : si un handler échoue pour l'une d'elles, rien n'est validé pour aucune.
 
 ### 6.5 Déclencher les échéances
 
@@ -508,6 +552,8 @@ foreach (var echeance in await moteur.ListerEcheancesDuesAsync(DateTime.Now, ct)
     portee.Complete();
 }
 ```
+
+La liste contient les attentes de temps et les escalades (section 3.3) ; l'appelant n'a pas à les distinguer.
 
 `DeclencherEcheanceAsync` est sans effet (`Traitee` à `false`) si l'échéance n'est pas due ou a déjà été déclenchée : le traitement peut tourner en plusieurs exemplaires ou être relancé.
 

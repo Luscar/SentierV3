@@ -14,6 +14,7 @@ internal sealed class Instance
     public TypeAttente? Attente { get; set; }
     public long? RefTache { get; set; }
     public DateTime? DateEcheance { get; set; }
+    public string? GroupeSignal { get; set; }
     public required Variables Variables { get; init; }
     public int NoVersion { get; set; }
     public string ActeurDemarrage { get; init; } = "";
@@ -27,5 +28,6 @@ internal sealed class Instance
         Attente = null;
         RefTache = null;
         DateEcheance = null;
+        GroupeSignal = null;
     }
 }

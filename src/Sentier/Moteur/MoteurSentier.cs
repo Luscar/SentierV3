@@ -5,6 +5,9 @@ namespace Sentier;
 /// <summary>Moteur passif : aucun état statique, aucun fil d'arrière-plan. Une instance du moteur par scope du client.</summary>
 public sealed class MoteurSentier : IMoteurSentier
 {
+    /// <summary>Transition consignée dans l'historique quand un nœud est quitté par son échéance d'escalade.</summary>
+    public const string TransitionEcheance = "echeance";
+
     private static readonly ResultatSollicitation NonTraitee = new(false, null);
 
     private readonly RegistreDefinitions _registre;
@@ -110,6 +113,18 @@ public sealed class MoteurSentier : IMoteurSentier
         return etats;
     }
 
+    public async Task<IReadOnlyList<EtatInstance>> SignalerGroupeAsync(string groupeCorrelation, string signal, string acteur,
+        string? transition = null, Donnees? donnees = null, string? cleDefinition = null, CancellationToken cancellationToken = default)
+    {
+        var etats = new List<EtatInstance>();
+        foreach (var instance in await _depot.AbonneesAuGroupeAsync(groupeCorrelation, cancellationToken))
+        {
+            var resultat = await RecevoirSignalAsync(instance, signal, acteur, transition, donnees, cleDefinition, cancellationToken);
+            if (resultat.Etat is not null) etats.Add(resultat.Etat);
+        }
+        return etats;
+    }
+
     private async Task<ResultatSollicitation> RecevoirSignalAsync(Instance instance, string signal, string acteur,
         string? transition, Donnees? donnees, string? cleDefinition, CancellationToken ct)
     {
@@ -133,12 +148,29 @@ public sealed class MoteurSentier : IMoteurSentier
     public async Task<ResultatSollicitation> DeclencherEcheanceAsync(long idInstance, string acteur, CancellationToken cancellationToken = default)
     {
         var instance = await _depot.ChargerAsync(idInstance, cancellationToken);
-        if (instance is not { EnCours: true, Attente: TypeAttente.Temps } || instance.DateEcheance > _depot.Maintenant) return NonTraitee;
+        if (instance is not { EnCours: true, DateEcheance: { } date } || date > _depot.Maintenant) return NonTraitee;
 
         var noeud = NoeudAttendu(instance);
         var appel = new Appel(acteur, false, _options.NombreMaxEtapes, cancellationToken);
-        await QuitterAttenteAsync(appel, instance, noeud, null);
-        await PoursuivreAsync(appel, instance, noeud.Suivant!);
+        if (instance.Attente == TypeAttente.Temps)
+        {
+            await QuitterAttenteAsync(appel, instance, noeud, null);
+            await PoursuivreAsync(appel, instance, noeud.Suivant!);
+            return new ResultatSollicitation(true, await EtatAsync(appel));
+        }
+
+        if (noeud.EscaladeDuNoeud is not { } escalade)
+        {
+            // La définition n'a plus d'échéance sur ce nœud : l'instance continue d'attendre, sans échéance.
+            instance.DateEcheance = null;
+            await _depot.MettreAJourAsync(instance, cancellationToken);
+            return NonTraitee;
+        }
+
+        // Escalade : la tâche ouverte est annulée, sans son action « après ».
+        if (instance.RefTache is { } refTache) await _bassin.AnnulerTacheAsync(refTache, acteur, cancellationToken);
+        await QuitterAttenteAsync(appel, instance, noeud, TransitionEcheance);
+        await PoursuivreAsync(appel, instance, escalade.Noeud);
         return new ResultatSollicitation(true, await EtatAsync(appel));
     }
 
@@ -205,10 +237,18 @@ public sealed class MoteurSentier : IMoteurSentier
                     instance.RefTache = await _bassin.CreerTacheAsync(
                         new DemandeTache(interactif.CodeTache, instance.Id, instance.IdAffaire, instance.CleCorrelation,
                             instance.CleDefinition, noeud.Id, appel.Acteur, appel.Assigner), appel.Ct);
+                    instance.DateEcheance = interactif.Escalade?.Calculer(_depot.Maintenant, instance.Variables, noeud.Id);
                     await AttendreAsync(appel, instance, TypeAttente.Tache);
                     return;
 
-                case NoeudAttenteSignal:
+                case NoeudAttenteSignal signal:
+                    if (signal.Groupe is { } groupe)
+                    {
+                        instance.GroupeSignal = groupe(instance.Variables);
+                        if (string.IsNullOrWhiteSpace(instance.GroupeSignal))
+                            throw new SentierException($"Nœud « {noeud.Id} » : le groupe de corrélation est vide ; sa variable n'a pas été écrite.");
+                    }
+                    instance.DateEcheance = signal.Escalade?.Calculer(_depot.Maintenant, instance.Variables, noeud.Id);
                     await AttendreAsync(appel, instance, TypeAttente.Signal);
                     return;
 
@@ -379,6 +419,7 @@ public sealed class MoteurSentier : IMoteurSentier
             CodeTache = feuille.Attente == TypeAttente.Tache ? (noeud as NoeudInteractif)?.CodeTache : null,
             RefTache = feuille.RefTache,
             DateEcheance = feuille.DateEcheance,
+            GroupeSignal = feuille.GroupeSignal,
             SignauxAttendus = feuille.Attente == TypeAttente.Signal && noeud is NoeudAttenteSignal attente ? attente.Signaux.Keys.ToArray() : [],
             Variables = feuille.Variables.Copier(),
         };

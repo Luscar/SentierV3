@@ -14,6 +14,7 @@ public sealed class LigneInstance
     public string? TypeAttente { get; set; }
     public long? RefTache { get; set; }
     public DateTime? DateEcheance { get; set; }
+    public string? GroupeSignal { get; set; }
     public string? Donnees { get; set; }
     public int NoVersion { get; set; }
     public string? ActeurDemarrage { get; set; }
