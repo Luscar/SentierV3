@@ -1,6 +1,6 @@
 # SentierV3
 
-Moteur de processus léger, livré en packages NuGet (.NET 10) et embarqué dans l'application cliente. Les besoins sont dans [docs/besoins-bpm-lightweight.md](docs/besoins-bpm-lightweight.md) ; le mode d'emploi complet est dans [docs/guide-utilisation.md](docs/guide-utilisation.md).
+Moteur de processus léger, livré en packages NuGet (.NET 10) et embarqué dans l'application cliente. Les besoins sont dans [docs/besoins-bpm-lightweight.md](docs/besoins-bpm-lightweight.md) ; le mode d'emploi complet est dans [docs/guide-utilisation.md](docs/guide-utilisation.md) et le branchement dans une application dans [docs/preparation-application-cliente.md](docs/preparation-application-cliente.md).
 
 | Package | Rôle | Dépendances |
 |---|---|---|
