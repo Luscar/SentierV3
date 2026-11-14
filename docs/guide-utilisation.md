@@ -2,7 +2,7 @@
 
 Ce guide explique comment préparer l'application cliente pour accueillir le moteur, puis comment écrire ses processus, ses commandes et ses requêtes, et comment piloter les instances.
 
-L'exemple suivi tout au long du guide est une demande de remboursement. Un exemple complet et testé se trouve aussi dans `tests/Sentier.Tests/Processus.cs`.
+L'exemple suivi tout au long du guide est une demande de remboursement. Un exemple complet et testé se trouve aussi dans `tests/Sentier.Tests/Exemple/`.
 
 - [1. Les notions](#1-les-notions)
 - [2. Préparer l'application cliente](#2-préparer-lapplication-cliente)
@@ -605,7 +605,7 @@ var etat = await moteur.DemarrerAsync(new DemandeDemarrage(DemandeRemboursement.
 Assert.Equal("approbation", etat.NoeudCourant);
 ```
 
-`tests/Sentier.Tests/Banc.cs` montre un banc complet : bassin en mémoire, écouteur, résolveur et horloge réglable (un `TimeProvider`) pour faire passer les échéances.
+`tests/Sentier.Tests/Banc.cs` et `tests/Sentier.Tests/Doublures/` montrent un banc complet : bassin en mémoire, écouteur, résolveur et horloge réglable (un `TimeProvider`) pour faire passer les échéances.
 
 ## 10. Exceptions
 

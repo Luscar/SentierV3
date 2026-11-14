@@ -53,4 +53,4 @@ Sans couche d'accès maison, `Sentier.Dapper` fournit `new AccesBDDapper(connexi
 
 ## Exemple de définition
 
-Voir `tests/Sentier.Tests/Processus.cs` : la définition de l'esquisse des besoins, ses handlers et ses sous-processus.
+Voir `tests/Sentier.Tests/Exemple/` : la définition de l'esquisse des besoins, ses handlers et ses sous-processus.
