@@ -14,16 +14,19 @@ Principe directeur : à chaque sollicitation (démarrage, fin de tâche, signal,
 - **B-TX-2** La transaction est ambiante : l'API du client ouvre un `TransactionScope`, et la connexion y participe. Le moteur n'ouvre et ne ferme jamais la connexion, ne crée pas de `TransactionScope` et ne valide ni n'annule rien.
 - **B-TX-8** Le moteur exécute ses commandes sur cette connexion sans objet transaction, comme la couche d'accès du client (au-dessus de Dapper). La garantie « tout ou rien » repose sur le `TransactionScope` du client.
 - **B-TX-9** Le moteur étant asynchrone, le `TransactionScope` du client doit être créé avec le flux asynchrone activé (`TransactionScopeAsyncFlowOption.Enabled`). À documenter comme prérequis.
-- **B-TX-10** **[À vérifier]** Tous les fournisseurs ne participent pas à un `TransactionScope` ; il faut confirmer par un test que le fournisseur SQLite utilisé en test le fait. Sinon, les tests ne valideront pas l'annulation en cas d'erreur, même si Oracle la garantit en production.
-- **B-TX-3** Toutes les étapes exécutées lors d'un même appel (nœuds systémiques, décisions, création de tâches, changements d'état du moteur) partagent cette transaction : tout passe ou rien ne passe.
-- **B-TX-4** Les handlers du client travaillent sur la même connexion, obtenue du scope courant ; le moteur n'a rien à leur transmettre.
-- **B-TX-5** **[Proposition]** En cas d'exception dans un handler, le moteur ne rattrape rien et ne fait aucune reprise : l'exception remonte et le client annule la transaction. L'instance reste donc dans son dernier état validé.
-- **B-TX-7** Toute l'API du moteur et tous les handlers sont asynchrones (`Task`, `CancellationToken`).
-- **B-TX-6** **[Proposition]** Documenter clairement que les effets hors base de données (courriel, appel HTTP) faits dans un handler ne sont pas transactionnels ; le patron recommandé côté client est une boîte d'envoi (outbox).
+- **B-TX-10** L'application cliente fonctionne déjà de cette façon (commandes sans objet transaction), sous Oracle comme sous SQLite ; le package s'aligne sur ce fonctionnement.
 
 ## 3. Définition de processus (builder fluent)
 
-- **B-DEF-1** Une définition se construit en code avec un builder fluent très simple, sans XML ni BPMN ni concepteur graphique.
+- **B-DEF-1** Une définition se construit en code avec un builder fluent, sans XML ni BPMN ni concepteur graphique.
+- **B-DEF-8** **Exigence primordiale : un builder facile à lire et à modifier.** Quelqu'un qui ne connaît pas le moteur doit comprendre le processus en lisant la définition. Concrètement :
+  - la définition se lit de haut en bas, dans l'ordre du déroulement normal ;
+  - l'enchaînement est implicite : un nœud mène au suivant dans le texte, sans transition à écrire ; seuls les embranchements et les retours en arrière sont explicites ;
+  - chaque nœud tient sur une ligne, ou sur un petit bloc pour un nœud interactif ou décisionnel ;
+  - les commandes et les requêtes sont des types, pas des chaînes, pour profiter du compilateur et de la navigation dans l'IDE ;
+  - une définition par classe, nommée d'après le processus ;
+  - ajouter, retirer ou déplacer une étape ne demande de toucher qu'à l'endroit concerné.
+- **B-DEF-9** Les sous-processus sont le moyen principal de garder une définition courte : un bloc d'étapes cohérent ou réutilisé devient une définition à part, appelée par une seule ligne.
 - **B-DEF-2** Une définition est immuable une fois construite.
 - **B-DEF-3** **[Proposition]** La définition est validée à la construction (`Build()`) : nœud de départ unique, nœuds inatteignables, transitions vers un nœud inexistant, décision sans branche par défaut, identifiants en double.
 - **B-DEF-4** Décision : les définitions vivent uniquement en code ; elles ne sont pas enregistrées en base. Une instance n'est **pas** liée à une version : elle ne conserve que la clé de sa définition, son nœud courant et ses données. Quand le code change, toutes les instances en cours suivent la nouvelle définition à leur prochaine sollicitation (comportement attendu par les utilisateurs, comme avec RHPAM aujourd'hui).
@@ -34,22 +37,23 @@ Principe directeur : à chaque sollicitation (démarrage, fin de tâche, signal,
 Esquisse d'API, à titre indicatif seulement :
 
 ```csharp
-var definition = ProcessDefinition.Create("demande-conge")
-    .System("valider", new ValiderDemande())
-    .Decision("besoin-approbation", new BesoinApprobationQuery(), d => d
-        .When(true, "approuver")
-        .Otherwise("enregistrer"))
-    .Interactive("approuver", i => i
-        .Pre(new PreparerApprobation())
-        .Post(new ConsignerDecision())
-        .On("approuve", "enregistrer")
-        .On("refuse", "notifier-refus"))
-    .WaitTime("delai-grace", TimeSpan.FromDays(2))
-    .WaitSignal("attente-paiement", "paiement-recu")
-    .SubProcess("archivage", "archivage-dossier")
-    .System("enregistrer", new EnregistrerConge())
-    .End()
-    .Build();
+public class DeclarationOriginale : IDefinitionProcessus
+{
+    public void Definir(IProcessusBuilder p) => p
+        .Systeme<ValiderDeclaration>("valider")
+        .SousProcessus("identification", TypeProcessus.IDENTIFICATION)
+        .Decision<DoitEtreVerifiee>("a-verifier", d => d
+            .Si(true, "verification")
+            .Sinon("comptabilisation"))
+        .Interactif("verification", "VERIF", t => t
+            .Avant<PreparerVerification>()
+            .Apres<ConsignerVerification>()
+            .Sur("refusee", "valider"))          // retour en arrière
+        .SousProcessus("comptabilisation", TypeProcessus.COMPTABILISATION)
+        .AttenteSignal("attente-paiement", "paiement-recu")
+        .AttenteTemps("delai-grace", TimeSpan.FromDays(2))
+        .Fin();
+}
 ```
 
 ## 4. Types de nœuds
@@ -66,6 +70,7 @@ var definition = ProcessDefinition.Create("demande-conge")
 Précisions :
 
 - **B-N-7** Un nœud interactif porte un code de tâche, transmis au bassin à la création de la tâche.
+- **B-N-8** Un nœud décisionnel choisit sa branche soit sur le résultat d'une requête traitée côté client (cas le plus fréquent), soit sur la valeur d'une variable de l'instance.
 - **B-N-1** Nœud interactif : l'action **pré** s'exécute dans la transaction qui crée la tâche ; l'action **post** s'exécute dans la transaction qui signale la complétion de la tâche. Les deux sont facultatives.
 - **B-N-2** Transitions nommées : un nœud d'attente (interactif ou signal) peut avoir plusieurs transitions sortantes nommées. L'appelant choisit la transition par son nom en complétant la tâche ou en envoyant le signal ; il ne désigne jamais un nœud. Remplace le `codeProchaineTache` de `AvancerATacheSuivanteAsync`.
 - **B-N-3** Sous-processus : l'enfant s'exécute dans la même transaction que le parent tant qu'il n'atteint pas de point d'attente.
@@ -108,7 +113,7 @@ Le moteur obtient la `DbConnection` du client (B-TX-1) ; ses opérations sont ex
 
 ## 7. État et données
 
-- **B-ET-1** **[Proposition]** Chaque instance porte un contexte de données (variables) lisible par les commandes et les requêtes, et modifiable par les commandes.
+- **B-ET-1** Chaque instance porte des variables : fournies au démarrage, alimentées par le contenu des complétions de tâche et des signaux, lisibles par les commandes et les requêtes, modifiables par les commandes. Elles peuvent orienter un nœud décisionnel (B-N-8).
 - **B-ET-2** Clé de corrélation sur l'instance : valeur opaque fournie par le client au démarrage, unique, sans signification d'affaires pour le moteur. Les sous-processus héritent de la clé de leur processus de tête.
 - **B-ET-6** Un seul nœud actif par arbre d'instances (processus de tête et sous-processus) : pas de parallélisme. Un signal ciblé par clé de corrélation atteint donc sans ambiguïté le nœud en attente, qu'il soit dans le processus de tête ou dans un sous-processus.
 - **B-ET-3** **[Proposition]** Accès concurrent : deux appels simultanés sur la même instance ne doivent pas la corrompre (verrou de ligne ou numéro de version optimiste).
@@ -121,17 +126,18 @@ Le moteur obtient la `DbConnection` du client (B-TX-1) ; ses opérations sont ex
 - **B-PER-2** Bases visées : Oracle en production, SQLite pour les tests. Le SQL du package doit fonctionner sur les deux.
 - **B-PER-3** Nom des tables : `{PRÉFIXE}_{nom}_{SUFFIXE}`, le préfixe et le suffixe étant fournis à l'enregistrement du package (exemple de la convention du client : `AT_DECLA_TAXE`).
 - **B-PER-4** Les noms de tables et de colonnes ci-dessous sont provisoires ; ils seront révisés par le client pour respecter les mnémoniques de son environnement, puis fixés dans le package. La seule configuration est le préfixe et le suffixe passés à l'enregistrement ; ils s'appliquent aux noms de tables, pas aux colonnes.
-- **B-PER-5** **[Proposition]** Pour rester portable entre Oracle et SQLite : identifiants générés par le package (pas de séquence ni d'auto-incrément), contrôle de concurrence par numéro de version (pas de verrou de ligne), données d'instance en JSON dans une colonne texte.
+- **B-PER-5** Les identifiants sont des `long`, alimentés par des séquences Oracle. Sous SQLite, où les séquences n'existent pas, le package utilise l'auto-incrément ; la génération d'identifiant est donc le seul point propre à chaque base.
+- **B-PER-7** **[Proposition]** Pour le reste, SQL commun aux deux bases : contrôle de concurrence par numéro de version (pas de verrou de ligne), variables d'instance en JSON dans une colonne texte.
 - **B-PER-6** **[Proposition]** Le package fournit les scripts de création des tables pour Oracle ; il n'exécute aucune migration de schéma lui-même.
 
 Table **INSTANCE** — une ligne par instance (processus de tête ou sous-processus) :
 
 | Colonne (provisoire) | Type logique | Rôle |
 |---|---|---|
-| ID_INSTANCE | Texte 36 | Identifiant généré par le package |
+| ID_INSTANCE | Nombre (`long`) | Identifiant, alimenté par séquence |
 | CLE_CORRELATION | Texte | Clé fournie par le client ; héritée par les sous-processus |
 | CLE_DEFINITION | Texte | Définition exécutée |
-| ID_INSTANCE_PARENT | Texte 36, nul | Instance appelante, pour un sous-processus |
+| ID_INSTANCE_PARENT | Nombre, nul | Instance appelante, pour un sous-processus |
 | NOEUD_COURANT | Texte | Identifiant du nœud où l'instance est arrêtée |
 | STATUT | Texte court | En cours, terminée, annulée |
 | TYPE_ATTENTE | Texte court, nul | Tâche, signal, temps, sous-processus |
@@ -148,8 +154,8 @@ Table **HISTORIQUE** — facultative (B-ET-5), une ligne par passage de nœud :
 
 | Colonne (provisoire) | Type logique | Rôle |
 |---|---|---|
-| ID_HISTORIQUE | Texte 36 | Identifiant généré par le package |
-| ID_INSTANCE | Texte 36 | Instance concernée |
+| ID_HISTORIQUE | Nombre (`long`) | Identifiant, alimenté par séquence |
+| ID_INSTANCE | Nombre | Instance concernée |
 | NOEUD | Texte | Nœud traversé |
 | EVENEMENT | Texte court | Entrée, sortie |
 | TRANSITION | Texte, nul | Transition empruntée à la sortie |
@@ -219,7 +225,7 @@ Trois problèmes de fond :
 - **B-COH-11** Un nœud d'attente peut accepter plusieurs signaux, chacun menant à sa propre transition. L'appelant n'a plus à essayer une liste de noms.
 - **B-COH-12** Les signaux et les complétions de tâche transportent un contenu (le `T contenu` actuel), versé dans les données de l'instance.
 - **B-COH-13** L'acteur (le `logon` actuel) est transmis au moteur à chaque appel, rendu disponible aux handlers et transmis au bassin de tâches à la création d'une tâche. L'assignation automatique à l'acteur reste une décision du bassin, pas du moteur.
-- **B-COH-14** Les identifiants de tâche restent compatibles avec les `long` de l'interface actuelle.
+- **B-COH-14** Les identifiants d'instance et de tâche sont des `long`, comme dans l'interface actuelle : le numéro de processus retourné est l'identifiant d'instance du moteur.
 - **B-COH-15** Une seule opération de démarrage, transactionnelle, avec une option « assigner la première tâche à l'acteur ». L'option est transmise au bassin de tâches, qui fait l'assignation. Les deux démarrages actuels peuvent ainsi devenir une seule méthode. Le démarrage différé (« éventuellement ») reste côté client : c'est un message asynchrone qui appelle ce démarrage.
 - **B-COH-16** Décision : `TypeSousProcessus` est retiré et remplacé par `TypeProcessus`. Un sous-processus est une définition comme une autre. Là où l'interface cible un sous-processus, le type sert de filtre : le signal n'est remis que si le nœud en attente appartient à une instance de ce type.
 
@@ -262,8 +268,7 @@ Décision : le client génère une clé de corrélation au démarrage d'un proce
 
 ## 11. Questions ouvertes
 
-1. **Numéro de processus retourné.** L'interface retourne un `long` (numéro de processus RHPAM). Qu'en font les appelants ? Le nouveau moteur identifie ses instances par un texte généré (B-PER-5). Soit la table de corrélation fournit un numéro, soit le moteur passe à un identifiant numérique, ce qui demande une séquence Oracle.
-2. **Fabrique de variables.** Les variables initiales construites par type de processus restent-elles nécessaires, ou les handlers liront-ils directement les données d'affaires à partir de l'identifiant ?
-3. **Fournisseur SQLite et `TransactionScope`.** À vérifier par un test (B-TX-10).
+1. **Nom des séquences.** Suivent-elles la même convention que les tables (`{PRÉFIXE}_{nom}_{SUFFIXE}`), ou une autre ?
+2. **Style du builder.** L'esquisse de la section 3 correspond-elle à ce qui est jugé « facile à lire » ? En particulier : noms de méthodes en français, cibles d'embranchement désignées par le nom du nœud.
 
 Hypothèse retenue : un signal diffusé fait avancer plusieurs instances dans la même transaction (cas rare, jugé acceptable).
